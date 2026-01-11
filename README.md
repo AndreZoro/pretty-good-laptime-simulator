@@ -1,3 +1,25 @@
+# New Introduction  
+This repo has been [forked](https://github.com/TUMFTM/laptime-simulation).  
+The old readme is below.  
+Additional packages that belong to the [project](https://github.com/TUMFTM)  
+have also been downloaded into this new repo:  
+- [global_racetrajectory_optimization](https://github.com/TUMFTM/global_racetrajectory_optimization)  
+- [trajectory_planning_helpers](https://github.com/TUMFTM/trajectory_planning_helpers)  
+The intent is to upgarde it for futher applications.  
+For this mission a set of tasks has to get completed:  
+- [x] Write tests  
+- [x] Update Python and used modules versions  
+- [x] Add posibilities to include various other car concepts  
+- [ ] Add more adaptive feutures such as advanced aero, ride height, boost features
+- [ ] Make optimized strategies for such advanced vehicles when use of devices is limited
+- [ ] Pure drag racing mode
+- [x] Add Streamlit UI  
+- [ ] Host on Streamlit  
+- [ ] Use in reverse to understand performance metrics of real world cars  
+
+
+---
+
 # Introduction
 This repository contains a quasi-steady-state lap time simulation implemented in Python. It can be used to evaluate the
 effect of various vehicle parameters on lap time and energy consumption. To generate a proper raceline for a given race
