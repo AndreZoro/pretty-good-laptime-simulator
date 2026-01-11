@@ -28,15 +28,20 @@ class CarHybrid(Car):
     # CONSTRUCTOR ------------------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
 
-    def __init__(self, parfilepath: str):
+    def __init__(self, parfilepath: str = None, pars_veh: dict = None):
 
-        # load vehicle parameters
-        parser = configparser.ConfigParser()
-
-        if not parser.read(parfilepath):
-            raise RuntimeError('Specified config file does not exist or is empty!')
-
-        pars_veh_tmp = json.loads(parser.get('VEH_PARS', 'veh_pars'))
+        # load vehicle parameters from file or use provided dict
+        if pars_veh is not None:
+            # Use provided parameters directly (deep copy to avoid modifying original)
+            import copy
+            pars_veh_tmp = copy.deepcopy(pars_veh)
+        elif parfilepath is not None:
+            parser = configparser.ConfigParser()
+            if not parser.read(parfilepath):
+                raise RuntimeError('Specified config file does not exist or is empty!')
+            pars_veh_tmp = json.loads(parser.get('VEH_PARS', 'veh_pars'))
+        else:
+            raise RuntimeError('Either parfilepath or pars_veh must be provided!')
 
         # unit conversions
         pars_veh_tmp["engine"]["n_begin"] /= 60.0   # [1/min] -> [1/s]
@@ -97,8 +102,11 @@ class CarHybrid(Car):
         n_begin = self.pars_engine["n_begin"]
         n_end = self.pars_engine["n_end"]
 
+        # handle both scalar and array inputs
+        scalar_input = np.isscalar(n)
+        n_use = np.atleast_1d(np.copy(n))
+
         # limit engine speed to valid range of power curve
-        n_use = np.copy(n)
         n_use[n_use < 0.75 * n_begin] = 0.75 * n_begin
         n_use[n_use > 1.2 * n_end] = 1.2 * n_end
 
@@ -107,6 +115,9 @@ class CarHybrid(Car):
                  + self.z_pow_engine[2] * n_use + self.z_pow_engine[3])
         p_eng[p_eng < 0.0] = 0.0  # assure that no negativ powers appear
 
+        # return scalar if input was scalar
+        if scalar_input:
+            return p_eng[0]
         return p_eng
 
     def plot_power_engine(self) -> None:

@@ -25,32 +25,35 @@ class Lap(object):
     # SLOTS ------------------------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
 
-    __slots__ = ("__driverobj",
-                 "__trackobj",
-                 "__t_cl",
-                 "__vel_cl",
-                 "__n_cl",
-                 "__m_eng",
-                 "__m_e_motor",
-                 "__m_requ",
-                 "__es_cl",
-                 "__gear_cl",
-                 "__e_rec_e_motor",
-                 "__a_x_final",
-                 "__e_rec_e_motor_max",
-                 "__pars_solver",
-                 "__debug_opts",
-                 "__fuel_cons_cl",
-                 "__e_cons_cl",
-                 "__tire_loads",
-                 "__e_es_to_e_motor_max")
+    __slots__ = (
+        "__driverobj",
+        "__trackobj",
+        "__t_cl",
+        "__vel_cl",
+        "__n_cl",
+        "__m_eng",
+        "__m_e_motor",
+        "__m_requ",
+        "__es_cl",
+        "__gear_cl",
+        "__e_rec_e_motor",
+        "__a_x_final",
+        "__e_rec_e_motor_max",
+        "__pars_solver",
+        "__debug_opts",
+        "__fuel_cons_cl",
+        "__e_cons_cl",
+        "__tire_loads",
+        "__e_es_to_e_motor_max",
+    )
 
     # ------------------------------------------------------------------------------------------------------------------
     # CONSTRUCTOR ------------------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
 
-    def __init__(self, driverobj: Driver, trackobj: Track, pars_solver: dict, debug_opts: dict):
-
+    def __init__(
+        self, driverobj: Driver, trackobj: Track, pars_solver: dict, debug_opts: dict
+    ):
         # save driver and track objects
         self.driverobj = driverobj
         self.trackobj = trackobj
@@ -66,25 +69,49 @@ class Lap(object):
             self.pars_solver["find_v_start"] = False
 
         # initialize lap variables
-        self.t_cl = np.zeros(trackobj.no_points_cl)     # [s] lap time at the beginning of a step
-        self.vel_cl = np.zeros(trackobj.no_points_cl)   # [m/s] velocity at the beginning of a step
-        self.n_cl = np.zeros(trackobj.no_points_cl)     # [1/s] rev at the beginning of a step
-        self.m_eng = np.zeros(trackobj.no_points)       # [Nm] used engine torque during current step, positive values
-        self.m_e_motor = np.zeros(trackobj.no_points)   # [Nm] used e motor torque during current step, positive values
-        self.m_requ = np.zeros(trackobj.no_points)      # [Nm] requested torque during current step, positive values
-        self.es_cl = np.zeros(trackobj.no_points_cl)    # [J] energy storage state at the beginning of a step
-        self.gear_cl = np.zeros(trackobj.no_points_cl, dtype=int)  # [-] gear during current step, zero based in solver
+        self.t_cl = np.zeros(
+            trackobj.no_points_cl
+        )  # [s] lap time at the beginning of a step
+        self.vel_cl = np.zeros(
+            trackobj.no_points_cl
+        )  # [m/s] velocity at the beginning of a step
+        self.n_cl = np.zeros(
+            trackobj.no_points_cl
+        )  # [1/s] rev at the beginning of a step
+        self.m_eng = np.zeros(
+            trackobj.no_points
+        )  # [Nm] used engine torque during current step, positive values
+        self.m_e_motor = np.zeros(
+            trackobj.no_points
+        )  # [Nm] used e motor torque during current step, positive values
+        self.m_requ = np.zeros(
+            trackobj.no_points
+        )  # [Nm] requested torque during current step, positive values
+        self.es_cl = np.zeros(
+            trackobj.no_points_cl
+        )  # [J] energy storage state at the beginning of a step
+        self.gear_cl = np.zeros(
+            trackobj.no_points_cl, dtype=int
+        )  # [-] gear during current step, zero based in solver
         # [kJ] energy recuperated during the current step available at the beginning of next step
         self.e_rec_e_motor = np.zeros(trackobj.no_points)
         self.a_x_final = 0.0
-        self.fuel_cons_cl = np.zeros(trackobj.no_points_cl)     # [kg] consumed fuel mass until current point
-        self.e_cons_cl = np.zeros(trackobj.no_points_cl)        # [J] consumed energy until current point
-        self.tire_loads = np.zeros((trackobj.no_points, 4))     # [N] tire loads [FL, FR, RL, RR]
+        self.fuel_cons_cl = np.zeros(
+            trackobj.no_points_cl
+        )  # [kg] consumed fuel mass until current point
+        self.e_cons_cl = np.zeros(
+            trackobj.no_points_cl
+        )  # [J] consumed energy until current point
+        self.tire_loads = np.zeros(
+            (trackobj.no_points, 4)
+        )  # [N] tire loads [FL, FR, RL, RR]
 
         # [J/lap] maximum amount of energy allowed to recuperate in e motor
-        if self.pars_solver["series"] == 'F1':
-            self.e_rec_e_motor_max = 2e6                  # [J] F1: 2 MJ/lap
-            self.e_es_to_e_motor_max = 4e6                # [J] F1: 4 MJ/lap  -> currently not considered!
+        if self.pars_solver["series"] == "F1":
+            self.e_rec_e_motor_max = 2e6  # [J] F1: 2 MJ/lap
+            self.e_es_to_e_motor_max = (
+                4e6  # [J] F1: 4 MJ/lap  -> currently not considered!
+            )
         else:
             self.e_rec_e_motor_max = np.inf
             self.e_es_to_e_motor_max = np.inf
@@ -93,80 +120,156 @@ class Lap(object):
     # GETTERS / SETTERS ------------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
 
-    def __get_driverobj(self) -> Driver: return self.__driverobj
-    def __set_driverobj(self, x: Driver) -> None: self.__driverobj = x
+    def __get_driverobj(self) -> Driver:
+        return self.__driverobj
+
+    def __set_driverobj(self, x: Driver) -> None:
+        self.__driverobj = x
+
     driverobj = property(__get_driverobj, __set_driverobj)
 
-    def __get_trackobj(self) -> Track: return self.__trackobj
-    def __set_trackobj(self, x: Track) -> None: self.__trackobj = x
+    def __get_trackobj(self) -> Track:
+        return self.__trackobj
+
+    def __set_trackobj(self, x: Track) -> None:
+        self.__trackobj = x
+
     trackobj = property(__get_trackobj, __set_trackobj)
 
-    def __get_t_cl(self) -> np.ndarray: return self.__t_cl
-    def __set_t_cl(self, x: np.ndarray) -> None: self.__t_cl = x
+    def __get_t_cl(self) -> np.ndarray:
+        return self.__t_cl
+
+    def __set_t_cl(self, x: np.ndarray) -> None:
+        self.__t_cl = x
+
     t_cl = property(__get_t_cl, __set_t_cl)
 
-    def __get_vel_cl(self) -> np.ndarray: return self.__vel_cl
-    def __set_vel_cl(self, x: np.ndarray) -> None: self.__vel_cl = x
+    def __get_vel_cl(self) -> np.ndarray:
+        return self.__vel_cl
+
+    def __set_vel_cl(self, x: np.ndarray) -> None:
+        self.__vel_cl = x
+
     vel_cl = property(__get_vel_cl, __set_vel_cl)
 
-    def __get_n_cl(self) -> np.ndarray: return self.__n_cl
-    def __set_n_cl(self, x: np.ndarray) -> None: self.__n_cl = x
+    def __get_n_cl(self) -> np.ndarray:
+        return self.__n_cl
+
+    def __set_n_cl(self, x: np.ndarray) -> None:
+        self.__n_cl = x
+
     n_cl = property(__get_n_cl, __set_n_cl)
 
-    def __get_m_eng(self) -> np.ndarray: return self.__m_eng
-    def __set_m_eng(self, x: np.ndarray) -> None: self.__m_eng = x
+    def __get_m_eng(self) -> np.ndarray:
+        return self.__m_eng
+
+    def __set_m_eng(self, x: np.ndarray) -> None:
+        self.__m_eng = x
+
     m_eng = property(__get_m_eng, __set_m_eng)
 
-    def __get_m_e_motor(self) -> np.ndarray: return self.__m_e_motor
-    def __set_m_e_motor(self, x: np.ndarray) -> None: self.__m_e_motor = x
+    def __get_m_e_motor(self) -> np.ndarray:
+        return self.__m_e_motor
+
+    def __set_m_e_motor(self, x: np.ndarray) -> None:
+        self.__m_e_motor = x
+
     m_e_motor = property(__get_m_e_motor, __set_m_e_motor)
 
-    def __get_m_requ(self) -> np.ndarray: return self.__m_requ
-    def __set_m_requ(self, x: np.ndarray) -> None: self.__m_requ = x
+    def __get_m_requ(self) -> np.ndarray:
+        return self.__m_requ
+
+    def __set_m_requ(self, x: np.ndarray) -> None:
+        self.__m_requ = x
+
     m_requ = property(__get_m_requ, __set_m_requ)
 
-    def __get_es_cl(self) -> np.ndarray: return self.__es_cl
-    def __set_es_cl(self, x: np.ndarray) -> None: self.__es_cl = x
+    def __get_es_cl(self) -> np.ndarray:
+        return self.__es_cl
+
+    def __set_es_cl(self, x: np.ndarray) -> None:
+        self.__es_cl = x
+
     es_cl = property(__get_es_cl, __set_es_cl)
 
-    def __get_gear_cl(self) -> np.ndarray: return self.__gear_cl
-    def __set_gear_cl(self, x: np.ndarray) -> None: self.__gear_cl = x
+    def __get_gear_cl(self) -> np.ndarray:
+        return self.__gear_cl
+
+    def __set_gear_cl(self, x: np.ndarray) -> None:
+        self.__gear_cl = x
+
     gear_cl = property(__get_gear_cl, __set_gear_cl)
 
-    def __get_e_rec_e_motor(self) -> np.ndarray: return self.__e_rec_e_motor
-    def __set_e_rec_e_motor(self, x: np.ndarray) -> None: self.__e_rec_e_motor = x
+    def __get_e_rec_e_motor(self) -> np.ndarray:
+        return self.__e_rec_e_motor
+
+    def __set_e_rec_e_motor(self, x: np.ndarray) -> None:
+        self.__e_rec_e_motor = x
+
     e_rec_e_motor = property(__get_e_rec_e_motor, __set_e_rec_e_motor)
 
-    def __get_a_x_final(self) -> float: return self.__a_x_final
-    def __set_a_x_final(self, x: float) -> None: self.__a_x_final = x
+    def __get_a_x_final(self) -> float:
+        return self.__a_x_final
+
+    def __set_a_x_final(self, x: float) -> None:
+        self.__a_x_final = x
+
     a_x_final = property(__get_a_x_final, __set_a_x_final)
 
-    def __get_e_rec_e_motor_max(self) -> float: return self.__e_rec_e_motor_max
-    def __set_e_rec_e_motor_max(self, x: float) -> None: self.__e_rec_e_motor_max = x
+    def __get_e_rec_e_motor_max(self) -> float:
+        return self.__e_rec_e_motor_max
+
+    def __set_e_rec_e_motor_max(self, x: float) -> None:
+        self.__e_rec_e_motor_max = x
+
     e_rec_e_motor_max = property(__get_e_rec_e_motor_max, __set_e_rec_e_motor_max)
 
-    def __get_pars_solver(self) -> dict: return self.__pars_solver
-    def __set_pars_solver(self, x: dict) -> None: self.__pars_solver = x
+    def __get_pars_solver(self) -> dict:
+        return self.__pars_solver
+
+    def __set_pars_solver(self, x: dict) -> None:
+        self.__pars_solver = x
+
     pars_solver = property(__get_pars_solver, __set_pars_solver)
 
-    def __get_debug_opts(self) -> dict: return self.__debug_opts
-    def __set_debug_opts(self, x: dict) -> None: self.__debug_opts = x
+    def __get_debug_opts(self) -> dict:
+        return self.__debug_opts
+
+    def __set_debug_opts(self, x: dict) -> None:
+        self.__debug_opts = x
+
     debug_opts = property(__get_debug_opts, __set_debug_opts)
 
-    def __get_fuel_cons_cl(self) -> np.ndarray: return self.__fuel_cons_cl
-    def __set_fuel_cons_cl(self, x: np.ndarray) -> None: self.__fuel_cons_cl = x
+    def __get_fuel_cons_cl(self) -> np.ndarray:
+        return self.__fuel_cons_cl
+
+    def __set_fuel_cons_cl(self, x: np.ndarray) -> None:
+        self.__fuel_cons_cl = x
+
     fuel_cons_cl = property(__get_fuel_cons_cl, __set_fuel_cons_cl)
 
-    def __get_e_cons_cl(self) -> np.ndarray: return self.__e_cons_cl
-    def __set_e_cons_cl(self, x: np.ndarray) -> None: self.__e_cons_cl = x
+    def __get_e_cons_cl(self) -> np.ndarray:
+        return self.__e_cons_cl
+
+    def __set_e_cons_cl(self, x: np.ndarray) -> None:
+        self.__e_cons_cl = x
+
     e_cons_cl = property(__get_e_cons_cl, __set_e_cons_cl)
 
-    def __get_tire_loads(self) -> np.ndarray: return self.__tire_loads
-    def __set_tire_loads(self, x: np.ndarray) -> None: self.__tire_loads = x
+    def __get_tire_loads(self) -> np.ndarray:
+        return self.__tire_loads
+
+    def __set_tire_loads(self, x: np.ndarray) -> None:
+        self.__tire_loads = x
+
     tire_loads = property(__get_tire_loads, __set_tire_loads)
 
-    def __get_e_es_to_e_motor_max(self) -> float: return self.__e_es_to_e_motor_max
-    def __set_e_es_to_e_motor_max(self, x: float) -> None: self.__e_es_to_e_motor_max = x
+    def __get_e_es_to_e_motor_max(self) -> float:
+        return self.__e_es_to_e_motor_max
+
+    def __set_e_es_to_e_motor_max(self, x: float) -> None:
+        self.__e_es_to_e_motor_max = x
+
     e_es_to_e_motor_max = property(__get_e_es_to_e_motor_max, __set_e_es_to_e_motor_max)
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -192,7 +295,7 @@ class Lap(object):
         self.e_cons_cl = np.zeros(self.trackobj.no_points_cl)
         self.tire_loads = np.zeros((self.trackobj.no_points, 4))
 
-        if self.pars_solver["series"] == 'F1':
+        if self.pars_solver["series"] == "F1":
             self.e_rec_e_motor_max = 2e6  # F1: 2 MJ/lap
         else:
             self.e_rec_e_motor_max = np.inf
@@ -234,16 +337,14 @@ class Lap(object):
             print("-" * 50)
             print("Starting solver run (1)")
 
-        self.__fbplus(v_start=self.pars_solver["v_start"],
-                      a_x_start=0.0)
+        self.__fbplus(v_start=self.pars_solver["v_start"], a_x_start=0.0)
 
         # use previous result to rerun the simulation with proper start velocity (if desired by user)
         if self.pars_solver["find_v_start"]:
             if self.debug_opts["use_print"]:
                 print("Starting solver run (2) (considering new start velocity)")
 
-            self.__fbplus(v_start=self.vel_cl[-1],
-                          a_x_start=self.a_x_final)
+            self.__fbplus(v_start=self.vel_cl[-1], a_x_start=self.a_x_final)
 
         # --------------------------------------------------------------------------------------------------------------
         # CALL SOLVER (WITH EM) ----------------------------------------------------------------------------------------
@@ -258,9 +359,10 @@ class Lap(object):
             i = 0
             es_prev = 0.0
 
-            while math.fabs(self.es_cl[-1] - es_prev) > self.pars_solver["es_diff_max"] \
-                    and i < self.pars_solver["max_no_em_iters"]:
-
+            while (
+                math.fabs(self.es_cl[-1] - es_prev) > self.pars_solver["es_diff_max"]
+                and i < self.pars_solver["max_no_em_iters"]
+            ):
                 i += 1
                 es_prev = self.es_cl[-1]
 
@@ -268,43 +370,46 @@ class Lap(object):
                     print("Starting recalculation considering hybrid system (%i)" % i)
 
                 # calculate hybrid system application (boost) based on the previous result
-                self.driverobj.calc_em_boost_use(t_cl=self.t_cl,
-                                                 vel_cl=self.vel_cl,
-                                                 n_cl=self.n_cl,
-                                                 m_requ=self.m_requ,
-                                                 es_final=self.es_cl[-1])
+                self.driverobj.calc_em_boost_use(
+                    t_cl=self.t_cl,
+                    vel_cl=self.vel_cl,
+                    n_cl=self.n_cl,
+                    m_requ=self.m_requ,
+                    es_final=self.es_cl[-1],
+                )
 
                 # rerun solver to get new velocity profile
                 if self.pars_solver["find_v_start"]:
-                    self.__fbplus(v_start=self.vel_cl[-1],
-                                  a_x_start=self.a_x_final)
+                    self.__fbplus(v_start=self.vel_cl[-1], a_x_start=self.a_x_final)
                 else:
-                    self.__fbplus(v_start=self.pars_solver["v_start"],
-                                  a_x_start=0.0)
+                    self.__fbplus(v_start=self.pars_solver["v_start"], a_x_start=0.0)
 
                 if self.debug_opts["use_print"]:
                     print("Remaining energy in ES: %.0f kJ" % (self.es_cl[-1] / 1000.0))
 
-        elif self.driverobj.pars_driver["em_strategy"] == "FCFB" and self.driverobj.pars_driver["use_lift_coast"]:
+        elif (
+            self.driverobj.pars_driver["em_strategy"] == "FCFB"
+            and self.driverobj.pars_driver["use_lift_coast"]
+        ):
             """Case FCFB + lift&coast."""
 
             if self.debug_opts["use_print"]:
                 print("Starting recalculation considering hybrid system (1)")
 
             # calculate hybrid system application (boost) based on the previous result
-            self.driverobj.calc_em_boost_use(t_cl=self.t_cl,
-                                             vel_cl=self.vel_cl,
-                                             n_cl=self.n_cl,
-                                             m_requ=self.m_requ,
-                                             es_final=self.es_cl[-1])
+            self.driverobj.calc_em_boost_use(
+                t_cl=self.t_cl,
+                vel_cl=self.vel_cl,
+                n_cl=self.n_cl,
+                m_requ=self.m_requ,
+                es_final=self.es_cl[-1],
+            )
 
             # rerun solver to get new velocity profile
             if self.pars_solver["find_v_start"]:
-                self.__fbplus(v_start=self.vel_cl[-1],
-                              a_x_start=self.a_x_final)
+                self.__fbplus(v_start=self.vel_cl[-1], a_x_start=self.a_x_final)
             else:
-                self.__fbplus(v_start=self.pars_solver["v_start"],
-                              a_x_start=0.0)
+                self.__fbplus(v_start=self.pars_solver["v_start"], a_x_start=0.0)
 
         if self.debug_opts["use_print"]:
             print("Finished solver calculations")
@@ -314,13 +419,13 @@ class Lap(object):
         # --------------------------------------------------------------------------------------------------------------
 
         if not self.driverobj.carobj.powertrain_type == "electric":
-            self.fuel_cons_cl = self.driverobj.carobj.fuel_cons(t_cl=self.t_cl,
-                                                                n_cl=self.n_cl,
-                                                                m_eng=self.m_eng)
+            self.fuel_cons_cl = self.driverobj.carobj.fuel_cons(
+                t_cl=self.t_cl, n_cl=self.n_cl, m_eng=self.m_eng
+            )
 
-        self.e_cons_cl = self.driverobj.carobj.e_cons(t_cl=self.t_cl,
-                                                      n_cl=self.n_cl,
-                                                      m_e_motor=self.m_e_motor)
+        self.e_cons_cl = self.driverobj.carobj.e_cons(
+            t_cl=self.t_cl, n_cl=self.n_cl, m_e_motor=self.m_e_motor
+        )
 
     def __fbplus(self, v_start: float, a_x_start: float = 0.0):
         """
@@ -332,7 +437,7 @@ class Lap(object):
         # --------------------------------------------------------------------------------------------------------------
 
         # loop options
-        tol = 1e-2          # [m/s] termination criterion (must be greater than force_conv)
+        tol = 1e-5  # [m/s] termination criterion (must be greater than force_conv)
         # force_conv = 5e-3   # [m/s] velocity malus per iteration to force convergence (should be about half of 'tol')
 
         # --------------------------------------------------------------------------------------------------------------
@@ -350,7 +455,9 @@ class Lap(object):
         self.es_cl[0] = self.driverobj.pars_driver["initial_energy"]
 
         # find gear at start
-        self.gear_cl[0], self.n_cl[0] = self.driverobj.carobj.find_gear(vel=self.vel_cl[0])
+        self.gear_cl[0], self.n_cl[0] = self.driverobj.carobj.find_gear(
+            vel=self.vel_cl[0]
+        )
 
         # --------------------------------------------------------------------------------------------------------------
         # LOOP THROUGH ALL THE POINTS ----------------------------------------------------------------------------------
@@ -365,14 +472,22 @@ class Lap(object):
             f_y_f, f_y_r = self.driverobj.carobj.calc_lat_forces(a_y=a_y)
 
             # calculate tire force potentials (using a_x = 0.0 (maximum cornering) to find out if we can stay on track)
-            f_x_pot_fl, f_y_pot_fl, self.tire_loads[i, 0], \
-                f_x_pot_fr, f_y_pot_fr, self.tire_loads[i, 1], \
-                f_x_pot_rl, f_y_pot_rl, self.tire_loads[i, 2], \
-                f_x_pot_rr, f_y_pot_rr, self.tire_loads[i, 3] = self.driverobj.carobj.\
-                tire_force_pots(vel=self.vel_cl[i],
-                                a_x=0.0,
-                                a_y=a_y,
-                                mu=self.trackobj.mu[i])
+            (
+                f_x_pot_fl,
+                f_y_pot_fl,
+                self.tire_loads[i, 0],
+                f_x_pot_fr,
+                f_y_pot_fr,
+                self.tire_loads[i, 1],
+                f_x_pot_rl,
+                f_y_pot_rl,
+                self.tire_loads[i, 2],
+                f_x_pot_rr,
+                f_y_pot_rr,
+                self.tire_loads[i, 3],
+            ) = self.driverobj.carobj.tire_force_pots(
+                vel=self.vel_cl[i], a_x=0.0, a_y=a_y, mu=self.trackobj.mu[i]
+            )
 
             # ----------------------------------------------------------------------------------------------------------
             # CASE 1: some tire potential is left and no velocity limit is set -> accelerate ---------------------------
@@ -384,18 +499,23 @@ class Lap(object):
             maximum possible cornering speed. A more exact model is not possible without considering slip angles, i.e.
             a kinematic vehicle model."""
 
-            if math.fabs(f_y_f) <= f_y_pot_fl + f_y_pot_fr and math.fabs(f_y_r) <= f_y_pot_rl + f_y_pot_rr \
-                    and self.vel_cl[i] <= self.trackobj.vel_lim[i]:
+            if (
+                math.fabs(f_y_f) <= f_y_pot_fl + f_y_pot_fr
+                and math.fabs(f_y_r) <= f_y_pot_rl + f_y_pot_rr
+                and self.vel_cl[i] <= self.trackobj.vel_lim[i]
+            ):
                 """Since it is obviously possible to stay on track assuming no longitudinal acceleration, we need to
                 get a proper assumption of the maximum longitudinal acceleration a_x that can be handled without
                 leaving the track (the connection originates in the a_x influence to the wheel loads)."""
 
                 # obtain maximum longitudinal acceleration
-                a_x_max = self.driverobj.carobj.calc_max_ax(vel=self.vel_cl[i],
-                                                            a_y=a_y,
-                                                            mu=self.trackobj.mu[i],
-                                                            f_y_f=f_y_f,
-                                                            f_y_r=f_y_r)
+                a_x_max = self.driverobj.carobj.calc_max_ax(
+                    vel=self.vel_cl[i],
+                    a_y=a_y,
+                    mu=self.trackobj.mu[i],
+                    f_y_f=f_y_f,
+                    f_y_r=f_y_r,
+                )
 
                 # approximate current a_x for tire load calc. either based on previous iteration or based on a_x_max
                 if a_x > 0.0:
@@ -404,49 +524,75 @@ class Lap(object):
                     a_x = a_x_max
 
                 # recalculate tire force potentials based on approximated a_x
-                f_x_pot_fl, f_y_pot_fl, self.tire_loads[i, 0], \
-                    f_x_pot_fr, f_y_pot_fr, self.tire_loads[i, 1], \
-                    f_x_pot_rl, f_y_pot_rl, self.tire_loads[i, 2], \
-                    f_x_pot_rr, f_y_pot_rr, self.tire_loads[i, 3] = self.driverobj.carobj.\
-                    tire_force_pots(vel=self.vel_cl[i],
-                                    a_x=a_x,
-                                    a_y=a_y,
-                                    mu=self.trackobj.mu[i])
+                (
+                    f_x_pot_fl,
+                    f_y_pot_fl,
+                    self.tire_loads[i, 0],
+                    f_x_pot_fr,
+                    f_y_pot_fr,
+                    self.tire_loads[i, 1],
+                    f_x_pot_rl,
+                    f_y_pot_rl,
+                    self.tire_loads[i, 2],
+                    f_x_pot_rr,
+                    f_y_pot_rr,
+                    self.tire_loads[i, 3],
+                ) = self.driverobj.carobj.tire_force_pots(
+                    vel=self.vel_cl[i], a_x=a_x, a_y=a_y, mu=self.trackobj.mu[i]
+                )
 
                 # calculate remaining tire potential at front and rear axle for longitudinal force transmission
-                f_x_poss = self.driverobj.carobj.calc_f_x_pot(f_x_pot_fl=f_x_pot_fl,
-                                                              f_x_pot_fr=f_x_pot_fr,
-                                                              f_x_pot_rl=f_x_pot_rl,
-                                                              f_x_pot_rr=f_x_pot_rr,
-                                                              f_y_pot_f=f_y_pot_fl + f_y_pot_fr,
-                                                              f_y_pot_r=f_y_pot_rl + f_y_pot_rr,
-                                                              f_y_f=f_y_f,
-                                                              f_y_r=f_y_r,
-                                                              force_use_all_wheels=False,
-                                                              limit_braking_weak_side=None)
+                f_x_poss = self.driverobj.carobj.calc_f_x_pot(
+                    f_x_pot_fl=f_x_pot_fl,
+                    f_x_pot_fr=f_x_pot_fr,
+                    f_x_pot_rl=f_x_pot_rl,
+                    f_x_pot_rr=f_x_pot_rr,
+                    f_y_pot_f=f_y_pot_fl + f_y_pot_fr,
+                    f_y_pot_r=f_y_pot_rl + f_y_pot_rr,
+                    f_y_f=f_y_f,
+                    f_y_r=f_y_r,
+                    force_use_all_wheels=False,
+                    limit_braking_weak_side=None,
+                )
 
                 # calculate torque distribution within the hybrid system (trying to reach the possible force f_x)
-                self.m_requ[i], self.m_eng[i], self.m_e_motor[i] = self.driverobj.carobj.\
-                    calc_torque_distr_f_x(f_x=f_x_poss,
-                                          n=self.n_cl[i],
-                                          throttle_pos=self.driverobj.throttle_pos[i],
-                                          es=self.es_cl[i],
-                                          em_boost_use=self.driverobj.em_boost_use[i],
-                                          vel=self.vel_cl[i])
+                self.m_requ[i], self.m_eng[i], self.m_e_motor[i] = (
+                    self.driverobj.carobj.calc_torque_distr_f_x(
+                        f_x=f_x_poss,
+                        n=self.n_cl[i],
+                        throttle_pos=self.driverobj.throttle_pos[i],
+                        es=self.es_cl[i],
+                        em_boost_use=self.driverobj.em_boost_use[i],
+                        vel=self.vel_cl[i],
+                    )
+                )
 
                 # calculate available acceleration force in powertrain
-                f_x_powert = (self.driverobj.carobj.pars_gearbox["eta_g"] * (self.m_eng[i] + self.m_e_motor[i])
-                              / (self.driverobj.carobj.pars_gearbox["i_trans"][self.gear_cl[i]]
-                                 * self.driverobj.carobj.r_driven_tire(vel=self.vel_cl[i])
-                                 * self.driverobj.carobj.pars_gearbox["e_i"][self.gear_cl[i]]))
+                f_x_powert = (
+                    self.driverobj.carobj.pars_gearbox["eta_g"]
+                    * (self.m_eng[i] + self.m_e_motor[i])
+                    / (
+                        self.driverobj.carobj.pars_gearbox["i_trans"][self.gear_cl[i]]
+                        * self.driverobj.carobj.r_driven_tire(vel=self.vel_cl[i])
+                        * self.driverobj.carobj.pars_gearbox["e_i"][self.gear_cl[i]]
+                    )
+                )
 
                 # calculate reached longitudinal acceleration
-                a_x = ((f_x_powert - self.driverobj.carobj.air_res(vel=self.vel_cl[i], drs=self.trackobj.drs[i])
-                       - self.driverobj.carobj.roll_res(f_z_tot=float(np.sum(self.tire_loads[i]))))
-                       / self.driverobj.carobj.pars_general["m"])
+                a_x = (
+                    f_x_powert
+                    - self.driverobj.carobj.air_res(
+                        vel=self.vel_cl[i], drs=self.trackobj.drs[i]
+                    )
+                    - self.driverobj.carobj.roll_res(
+                        f_z_tot=float(np.sum(self.tire_loads[i]))
+                    )
+                ) / self.driverobj.carobj.pars_general["m"]
 
                 # calculate velocity in the next point
-                self.vel_cl[i + 1] = math.sqrt(math.pow(self.vel_cl[i], 2) + 2 * a_x * self.trackobj.stepsize)
+                self.vel_cl[i + 1] = math.sqrt(
+                    math.pow(self.vel_cl[i], 2) + 2 * a_x * self.trackobj.stepsize
+                )
 
                 # consider velocity limit if reaching it during this step
                 """This if statement is intended to prevent unnecessary backward loops. Therefore it should only come
@@ -454,47 +600,71 @@ class Lap(object):
                 step."""
                 if self.vel_cl[i] <= vel_lim_cl[i + 1] < self.vel_cl[i + 1]:
                     # calculate a_x required to reach the velocity limit
-                    a_x = (math.pow(vel_lim_cl[i + 1], 2)
-                           - math.pow(self.vel_cl[i], 2)) / (2 * self.trackobj.stepsize)
+                    a_x = (
+                        math.pow(vel_lim_cl[i + 1], 2) - math.pow(self.vel_cl[i], 2)
+                    ) / (2 * self.trackobj.stepsize)
 
-                    f_x_target = (self.driverobj.carobj.air_res(vel=self.vel_cl[i], drs=False)
-                                  + self.driverobj.carobj.roll_res(f_z_tot=float(np.sum(self.tire_loads[i])))
-                                  + self.driverobj.carobj.pars_general["m"] * a_x)
+                    f_x_target = (
+                        self.driverobj.carobj.air_res(vel=self.vel_cl[i], drs=False)
+                        + self.driverobj.carobj.roll_res(
+                            f_z_tot=float(np.sum(self.tire_loads[i]))
+                        )
+                        + self.driverobj.carobj.pars_general["m"] * a_x
+                    )
 
                     # calculate torque distribution within the hybrid system (trying to reach the possible force f_x)
-                    self.m_requ[i], self.m_eng[i], self.m_e_motor[i] = self.driverobj.carobj.\
-                        calc_torque_distr_f_x(f_x=f_x_target,
-                                              n=self.n_cl[i],
-                                              throttle_pos=self.driverobj.throttle_pos[i],
-                                              es=self.es_cl[i],
-                                              em_boost_use=self.driverobj.em_boost_use[i],
-                                              vel=self.vel_cl[i])
+                    self.m_requ[i], self.m_eng[i], self.m_e_motor[i] = (
+                        self.driverobj.carobj.calc_torque_distr_f_x(
+                            f_x=f_x_target,
+                            n=self.n_cl[i],
+                            throttle_pos=self.driverobj.throttle_pos[i],
+                            es=self.es_cl[i],
+                            em_boost_use=self.driverobj.em_boost_use[i],
+                            vel=self.vel_cl[i],
+                        )
+                    )
 
                     # set velocity accordingly
                     self.vel_cl[i + 1] = vel_lim_cl[i + 1]
 
                 # check shifting -> calculate gear and rev in the next point
-                self.gear_cl[i + 1], self.n_cl[i + 1] = self.driverobj.carobj.find_gear(vel=self.vel_cl[i + 1])
+                self.gear_cl[i + 1], self.n_cl[i + 1] = self.driverobj.carobj.find_gear(
+                    vel=self.vel_cl[i + 1]
+                )
 
                 # calculate time at start of next point
-                self.t_cl[i + 1] = self.t_cl[i] + 2 * self.trackobj.stepsize / (self.vel_cl[i] + self.vel_cl[i + 1])
+                self.t_cl[i + 1] = self.t_cl[i] + 2 * self.trackobj.stepsize / (
+                    self.vel_cl[i] + self.vel_cl[i + 1]
+                )
 
                 # calculate energy recuperated during current step by electric turbocharger in [J] (only during acc.)
-                if self.driverobj.carobj.powertrain_type == "hybrid" and self.driverobj.pars_driver["use_recuperation"]:
-                    e_rec_etc = (self.driverobj.carobj.pars_engine["eta_etc_re"] * self.n_cl[i] * self.m_eng[i]
-                                 * 2 * math.pi * (self.t_cl[i + 1] - self.t_cl[i]))
+                if (
+                    self.driverobj.carobj.powertrain_type == "hybrid"
+                    and self.driverobj.pars_driver["use_recuperation"]
+                ):
+                    e_rec_etc = (
+                        self.driverobj.carobj.pars_engine["eta_etc_re"]
+                        * self.n_cl[i]
+                        * self.m_eng[i]
+                        * 2
+                        * math.pi
+                        * (self.t_cl[i + 1] - self.t_cl[i])
+                    )
                 else:
                     e_rec_etc = 0.0
 
                 # calculate energy used by e motor during current step in [J]
-                e_cons_e_motor = (self.driverobj.carobj.power_demand_e_motor_drive(n=self.n_cl[i],
-                                                                                   m_e_motor=self.m_e_motor[i])
-                                  * (self.t_cl[i + 1] - self.t_cl[i]))
+                e_cons_e_motor = self.driverobj.carobj.power_demand_e_motor_drive(
+                    n=self.n_cl[i], m_e_motor=self.m_e_motor[i]
+                ) * (self.t_cl[i + 1] - self.t_cl[i])
 
                 # calculate changes in the hybrid energy storage [J]
                 self.es_cl[i + 1] = self.es_cl[i] + e_rec_etc - e_cons_e_motor
 
-                if not self.driverobj.carobj.powertrain_type == "electric" and self.es_cl[i + 1] < 0.0:
+                if (
+                    not self.driverobj.carobj.powertrain_type == "electric"
+                    and self.es_cl[i + 1] < 0.0
+                ):
                     self.es_cl[i + 1] = 0.0
 
                 # increment
@@ -507,15 +677,20 @@ class Lap(object):
             else:
                 # check if start velocity is too high
                 if i == 1:
-                    raise RuntimeError("Reduce start velocity! (it could be that braking would affect points within the"
-                                       + " previous lap)")
+                    raise RuntimeError(
+                        "Reduce start velocity! (it could be that braking would affect points within the"
+                        + " previous lap)"
+                    )
 
                 # get maximum current velocity depending on speed limit or lateral acceleration limit due to curvature
-                self.vel_cl[i] = min(self.driverobj.carobj.
-                                     v_max_cornering(kappa=self.trackobj.kappa[i],
-                                                     mu=self.trackobj.mu[i],
-                                                     vel_subtr_corner=self.driverobj.pars_driver["vel_subtr_corner"]),
-                                     self.trackobj.vel_lim[i])
+                self.vel_cl[i] = min(
+                    self.driverobj.carobj.v_max_cornering(
+                        kappa=self.trackobj.kappa[i],
+                        mu=self.trackobj.mu[i],
+                        vel_subtr_corner=self.driverobj.pars_driver["vel_subtr_corner"],
+                    ),
+                    self.trackobj.vel_lim[i],
+                )
 
                 # ------------------------------------------------------------------------------------------------------
                 # BACKWARD ITERATIONS -> MAXIMUM CURRENT VELOCITY SHOULD BE KEPT AT CURRENT POINT i --------------------
@@ -530,11 +705,13 @@ class Lap(object):
                     counteract infinite loops convergence is forced with an increasing loop counter."""
 
                     # loop until a good approximation for the velocity in the previous point is found
-                    vel_tmp = self.vel_cl[i - j]    # [m/s] applied velocity (current point used as a starting value)
+                    vel_tmp = self.vel_cl[
+                        i - j
+                    ]  # [m/s] applied velocity (current point used as a starting value)
                     vel_tmp_old = 0.0  # [m/s] used to save the old value to compare for the termination criterion
                     vels_tmp = []  # used to save velocity values to be able to calculate a mean value for convergence
-                    tire_loads_tmp = np.zeros(4)    # [N] tire loads [FL, FR, RL, RR]
-                    counter = 0                     # [-] loop counter
+                    tire_loads_tmp = np.zeros(4)  # [N] tire loads [FL, FR, RL, RR]
+                    counter = 0  # [-] loop counter
 
                     while math.fabs(vel_tmp - vel_tmp_old) > tol:
                         # increase counter and store previous value to be able to check for the termination criterion
@@ -546,37 +723,63 @@ class Lap(object):
                         f_y_f, f_y_r = self.driverobj.carobj.calc_lat_forces(a_y=a_y)
 
                         # calculate tire force potentials
-                        f_x_pot_fl, f_y_pot_fl, tire_loads_tmp[0], \
-                            f_x_pot_fr, f_y_pot_fr, tire_loads_tmp[1], \
-                            f_x_pot_rl, f_y_pot_rl, tire_loads_tmp[2], \
-                            f_x_pot_rr, f_y_pot_rr, tire_loads_tmp[3] = self.driverobj.carobj.\
-                            tire_force_pots(vel=vel_tmp,
-                                            a_x=a_x,
-                                            a_y=a_y,
-                                            mu=self.trackobj.mu[i - j - 1])
+                        (
+                            f_x_pot_fl,
+                            f_y_pot_fl,
+                            tire_loads_tmp[0],
+                            f_x_pot_fr,
+                            f_y_pot_fr,
+                            tire_loads_tmp[1],
+                            f_x_pot_rl,
+                            f_y_pot_rl,
+                            tire_loads_tmp[2],
+                            f_x_pot_rr,
+                            f_y_pot_rr,
+                            tire_loads_tmp[3],
+                        ) = self.driverobj.carobj.tire_force_pots(
+                            vel=vel_tmp,
+                            a_x=a_x,
+                            a_y=a_y,
+                            mu=self.trackobj.mu[i - j - 1],
+                        )
 
                         # calculate remaining tire potential for deceleration using all wheels
                         # assumption: potential always usable by proper brake force distribution
-                        f_x_poss = self.driverobj.carobj.\
-                            calc_f_x_pot(f_x_pot_fl=f_x_pot_fl,
-                                         f_x_pot_fr=f_x_pot_fr,
-                                         f_x_pot_rl=f_x_pot_rl,
-                                         f_x_pot_rr=f_x_pot_rr,
-                                         f_y_pot_f=f_y_pot_fl + f_y_pot_fr,
-                                         f_y_pot_r=f_y_pot_rl + f_y_pot_rr,
-                                         f_y_f=f_y_f,
-                                         f_y_r=f_y_r,
-                                         force_use_all_wheels=True,
-                                         limit_braking_weak_side=self.pars_solver["limit_braking_weak_side"])
+                        f_x_poss = self.driverobj.carobj.calc_f_x_pot(
+                            f_x_pot_fl=f_x_pot_fl,
+                            f_x_pot_fr=f_x_pot_fr,
+                            f_x_pot_rl=f_x_pot_rl,
+                            f_x_pot_rr=f_x_pot_rr,
+                            f_y_pot_f=f_y_pot_fl + f_y_pot_fr,
+                            f_y_pot_r=f_y_pot_rl + f_y_pot_rr,
+                            f_y_f=f_y_f,
+                            f_y_r=f_y_r,
+                            force_use_all_wheels=True,
+                            limit_braking_weak_side=self.pars_solver[
+                                "limit_braking_weak_side"
+                            ],
+                        )
 
                         # calculate deceleration
-                        a_x = (-(f_x_poss + self.driverobj.carobj.air_res(vel=vel_tmp, drs=False)
-                                 + self.driverobj.carobj.roll_res(f_z_tot=float(np.sum(tire_loads_tmp))))
-                               / self.driverobj.carobj.pars_general["m"])
+                        a_x = (
+                            -(
+                                f_x_poss
+                                + self.driverobj.carobj.air_res(vel=vel_tmp, drs=False)
+                                + self.driverobj.carobj.roll_res(
+                                    f_z_tot=float(np.sum(tire_loads_tmp))
+                                )
+                            )
+                            / self.driverobj.carobj.pars_general["m"]
+                        )
 
                         # calculate previous velocity (-a_x because we go backwards and therefore need a positive
                         # acceleration within the equation) and append it to vels_tmp
-                        vels_tmp.append(math.sqrt(math.pow(self.vel_cl[i - j], 2) + 2 * -a_x * self.trackobj.stepsize))
+                        vels_tmp.append(
+                            math.sqrt(
+                                math.pow(self.vel_cl[i - j], 2)
+                                + 2 * -a_x * self.trackobj.stepsize
+                            )
+                        )
 
                         # calculate applied velocity as average of all to get a robust convergence characteristic
                         vel_tmp = sum(vels_tmp) / len(vels_tmp)
@@ -596,8 +799,10 @@ class Lap(object):
                     j += 1
 
                     if i - j - 1 < 0:
-                        raise RuntimeError("Reduce start velocity (it could be that braking would affect points within"
-                                           " the previous lap)!")
+                        raise RuntimeError(
+                            "Reduce start velocity (it could be that braking would affect points within"
+                            " the previous lap)!"
+                        )
 
                 # ------------------------------------------------------------------------------------------------------
                 # MODIFIED VELOCITY PROFILE IS KNOWN -> RECALCULATION OF REMAINING DATA ON THIS BASIS ------------------
@@ -605,11 +810,15 @@ class Lap(object):
 
                 # recalculate gears and revs for all changed points including current point
                 for k in range(i - j, i + 1):
-                    self.gear_cl[k], self.n_cl[k] = self.driverobj.carobj.find_gear(vel=self.vel_cl[k])
+                    self.gear_cl[k], self.n_cl[k] = self.driverobj.carobj.find_gear(
+                        vel=self.vel_cl[k]
+                    )
 
                 # recalculate lap times starting from the last unchanged point i - j - 1
                 for k in range(i - j - 1, i):
-                    self.t_cl[k + 1] = self.t_cl[k] + 2 * self.trackobj.stepsize / (self.vel_cl[k + 1] + self.vel_cl[k])
+                    self.t_cl[k + 1] = self.t_cl[k] + 2 * self.trackobj.stepsize / (
+                        self.vel_cl[k + 1] + self.vel_cl[k]
+                    )
 
                 # recalculate energy related quantities starting from the last unchanged point i - j - 1
                 for k in range(i - j - 1, i):
@@ -623,12 +832,16 @@ class Lap(object):
                     else:
                         drs_tmp = False
 
-                    f_x_resi = (self.driverobj.carobj.air_res(vel=self.vel_cl[k], drs=drs_tmp)
-                                + self.driverobj.carobj.roll_res(f_z_tot=float(np.sum(self.tire_loads[k]))))
+                    f_x_resi = self.driverobj.carobj.air_res(
+                        vel=self.vel_cl[k], drs=drs_tmp
+                    ) + self.driverobj.carobj.roll_res(
+                        f_z_tot=float(np.sum(self.tire_loads[k]))
+                    )
 
                     # calculate the longitudinal acceleration and force required for the given velocities
-                    a_x_requ = (math.pow(self.vel_cl[k + 1], 2)
-                                - math.pow(self.vel_cl[k], 2)) / (2 * self.trackobj.stepsize)
+                    a_x_requ = (
+                        math.pow(self.vel_cl[k + 1], 2) - math.pow(self.vel_cl[k], 2)
+                    ) / (2 * self.trackobj.stepsize)
                     f_x_requ = self.driverobj.carobj.pars_general["m"] * a_x_requ
 
                     # calculate force that must be provided by the powertrain (or brakes) to reach this acc. force
@@ -642,41 +855,61 @@ class Lap(object):
                         self.e_rec_e_motor[k] = 0.0
 
                         # calculate torque distribution within the hybrid system (trying to reach possible force f_x)
-                        self.m_requ[k], self.m_eng[k], self.m_e_motor[k] = self.driverobj.carobj.\
-                            calc_torque_distr_f_x(f_x=f_x_powert,
-                                                  n=self.n_cl[k],
-                                                  throttle_pos=self.driverobj.throttle_pos[k],
-                                                  es=self.es_cl[k],
-                                                  em_boost_use=self.driverobj.em_boost_use[k],
-                                                  vel=self.vel_cl[k])
+                        self.m_requ[k], self.m_eng[k], self.m_e_motor[k] = (
+                            self.driverobj.carobj.calc_torque_distr_f_x(
+                                f_x=f_x_powert,
+                                n=self.n_cl[k],
+                                throttle_pos=self.driverobj.throttle_pos[k],
+                                es=self.es_cl[k],
+                                em_boost_use=self.driverobj.em_boost_use[k],
+                                vel=self.vel_cl[k],
+                            )
+                        )
 
                         # check torques provided and requested
-                        if not math.isclose(self.m_eng[k] + self.m_e_motor[k], self.m_requ[k]):
+                        if not math.isclose(
+                            self.m_eng[k] + self.m_e_motor[k], self.m_requ[k]
+                        ):
                             print(
                                 "WARNING: It seems like if the requested torque could not be supplied by the"
                                 + " powertrain (maybe because of energy storage changes during recalculation or because"
                                 + " the throttle position was set to 0.0 during EM strategy calculation). Be aware"
                                 + " that this fact is not considered and the further calculation is processed as if the"
                                 + " torque was supplied! The difference amounts to %.1f Nm."
-                                % (self.m_requ[k] - (self.m_eng[k] + self.m_e_motor[k])))
+                                % (self.m_requ[k] - (self.m_eng[k] + self.m_e_motor[k]))
+                            )
 
                         # calculate energy recuperated during current step by el. turbocharger in [J] (only during acc.)
-                        if self.driverobj.carobj.powertrain_type == "hybrid" and \
-                                self.driverobj.pars_driver["use_recuperation"]:
-                            e_rec_etc = (self.driverobj.carobj.pars_engine["eta_etc_re"] * self.n_cl[k]
-                                         * self.m_eng[k] * 2 * math.pi * (self.t_cl[k + 1] - self.t_cl[k]))
+                        if (
+                            self.driverobj.carobj.powertrain_type == "hybrid"
+                            and self.driverobj.pars_driver["use_recuperation"]
+                        ):
+                            e_rec_etc = (
+                                self.driverobj.carobj.pars_engine["eta_etc_re"]
+                                * self.n_cl[k]
+                                * self.m_eng[k]
+                                * 2
+                                * math.pi
+                                * (self.t_cl[k + 1] - self.t_cl[k])
+                            )
                         else:
                             e_rec_etc = 0.0
 
                         # calculate energy used by e motor during current step in [J]
-                        e_cons_e_motor = (self.driverobj.carobj.power_demand_e_motor_drive(n=self.n_cl[k],
-                                                                                           m_e_motor=self.m_e_motor[k])
-                                          * (self.t_cl[k + 1] - self.t_cl[k]))
+                        e_cons_e_motor = (
+                            self.driverobj.carobj.power_demand_e_motor_drive(
+                                n=self.n_cl[k], m_e_motor=self.m_e_motor[k]
+                            )
+                            * (self.t_cl[k + 1] - self.t_cl[k])
+                        )
 
                         # calculate changes in the hybrid energy storage [J]
                         self.es_cl[k + 1] = self.es_cl[k] + e_rec_etc - e_cons_e_motor
 
-                        if not self.driverobj.carobj.powertrain_type == "electric" and self.es_cl[k + 1] < 0.0:
+                        if (
+                            not self.driverobj.carobj.powertrain_type == "electric"
+                            and self.es_cl[k + 1] < 0.0
+                        ):
                             self.es_cl[k + 1] = 0.0
 
                     else:
@@ -688,10 +921,15 @@ class Lap(object):
 
                         # energy recuperation by e motor in [J] under the assumption of e motor being able to recuperate
                         # all kinetic energy remaining after subtraction of the resistances
-                        if np.sum(self.e_rec_e_motor) < self.e_rec_e_motor_max \
-                                and self.driverobj.pars_driver["use_recuperation"]:
-                            self.e_rec_e_motor[k] = (self.driverobj.carobj.pars_engine["eta_e_motor_re"]
-                                                     * math.fabs(f_x_powert) * self.trackobj.stepsize)
+                        if (
+                            np.sum(self.e_rec_e_motor) < self.e_rec_e_motor_max
+                            and self.driverobj.pars_driver["use_recuperation"]
+                        ):
+                            self.e_rec_e_motor[k] = (
+                                self.driverobj.carobj.pars_engine["eta_e_motor_re"]
+                                * math.fabs(f_x_powert)
+                                * self.trackobj.stepsize
+                            )
 
                         else:
                             self.e_rec_e_motor[k] = 0.0
@@ -726,8 +964,12 @@ class Lap(object):
         fig = plt.figure()
         ax = fig.add_subplot(111)
         plt.plot(self.trackobj.dists_cl[:-1], a_y_tmp)
-        ax.axhline(y=-a_y_valid, color="k", linestyle="--", linewidth=3.0)  # valid lateral acceleration limit
-        ax.axhline(y=a_y_valid, color="k", linestyle="--", linewidth=3.0)  # valid lateral acceleration limit
+        ax.axhline(
+            y=-a_y_valid, color="k", linestyle="--", linewidth=3.0
+        )  # valid lateral acceleration limit
+        ax.axhline(
+            y=a_y_valid, color="k", linestyle="--", linewidth=3.0
+        )  # valid lateral acceleration limit
         ax.set_title("Lateral acceleration profile")
         ax.set_xlabel("distance s in m")
         ax.set_ylabel("lateral acceleration ay in m/s2")
@@ -744,12 +986,18 @@ class Lap(object):
         ax.set_title("Provided and requested (i.e. transmittable by the tires) torque")
         ax.set_xlabel("distance s in m")
         ax.set_ylabel("torque in Nm")
-        plt.legend(["combustion engine", "electric motor", "powertrain total", "requested"])
+        plt.legend(
+            ["combustion engine", "electric motor", "powertrain total", "requested"]
+        )
         plt.grid()
         plt.show()
 
     def plot_tire_loads(self):
-        f_z_stat_avg = 0.25 * self.driverobj.carobj.pars_general["m"] * self.driverobj.carobj.pars_general["g"]
+        f_z_stat_avg = (
+            0.25
+            * self.driverobj.carobj.pars_general["m"]
+            * self.driverobj.carobj.pars_general["g"]
+        )
         if self.pars_solver["series"] == "F1":
             f_z_dyn_valid = f_z_stat_avg * 5.0
             legend_text = "5 * avg. static"
@@ -764,12 +1012,25 @@ class Lap(object):
         plt.plot(self.trackobj.dists_cl[:-1], self.tire_loads[:, 2])
         plt.plot(self.trackobj.dists_cl[:-1], self.tire_loads[:, 3])
         # plt.plot(self.trackobj.dists_cl[:-1], np.sum(self.tire_loads, axis=1))
-        ax.axhline(y=f_z_stat_avg, color="k", linestyle="--", linewidth=3.0)   # valid tire load range
-        ax.axhline(y=f_z_dyn_valid, color="k", linestyle="--", linewidth=3.0)  # valid tire load range
+        ax.axhline(
+            y=f_z_stat_avg, color="k", linestyle="--", linewidth=3.0
+        )  # valid tire load range
+        ax.axhline(
+            y=f_z_dyn_valid, color="k", linestyle="--", linewidth=3.0
+        )  # valid tire load range
         ax.set_title("Tire loads")
         ax.set_xlabel("distance s in m")
         ax.set_ylabel("tire load F_z in N")
-        plt.legend(["front left", "front right", "rear left", "rear right", "avg. static", legend_text])
+        plt.legend(
+            [
+                "front left",
+                "front right",
+                "rear left",
+                "rear right",
+                "avg. static",
+                legend_text,
+            ]
+        )
         # plt.legend(["front left", "front right", "rear left", "rear right", "total", "avg. static",
         #             "7 * avg. static"])
         plt.grid()
@@ -793,7 +1054,9 @@ class Lap(object):
         ax = fig.add_subplot(111)
         plt.plot(self.trackobj.dists_cl[:-1], f_x_aero)
         plt.plot(self.trackobj.dists_cl[:-1], f_z_aero)
-        ax.axhline(y=f_z_aero_valid, color="k", linestyle="--", linewidth=3.0)   # valid downforce range
+        ax.axhline(
+            y=f_z_aero_valid, color="k", linestyle="--", linewidth=3.0
+        )  # valid downforce range
         ax.set_title("Aero forces (no DRS considered!)")
         ax.set_xlabel("distance s in m")
         ax.set_ylabel("amplitude in N")
@@ -852,74 +1115,149 @@ class Lap(object):
         if self.trackobj.pars_track["use_drs1"]:
             if self.trackobj.zone_inds["drs1_a"] < self.trackobj.zone_inds["drs1_d"]:
                 # common case
-                ax1.plot(self.trackobj.raceline[self.trackobj.zone_inds["drs1_a"]:self.trackobj.zone_inds["drs1_d"], 0],
-                         self.trackobj.raceline[self.trackobj.zone_inds["drs1_a"]:self.trackobj.zone_inds["drs1_d"], 1],
-                         "g--", linewidth=3.0)
+                ax1.plot(
+                    self.trackobj.raceline[
+                        self.trackobj.zone_inds["drs1_a"] : self.trackobj.zone_inds[
+                            "drs1_d"
+                        ],
+                        0,
+                    ],
+                    self.trackobj.raceline[
+                        self.trackobj.zone_inds["drs1_a"] : self.trackobj.zone_inds[
+                            "drs1_d"
+                        ],
+                        1,
+                    ],
+                    "g--",
+                    linewidth=3.0,
+                )
             else:
                 # DRS zone is split by start/finish line
-                ax1.plot(self.trackobj.raceline[self.trackobj.zone_inds["drs1_a"]:, 0],
-                         self.trackobj.raceline[self.trackobj.zone_inds["drs1_a"]:, 1],
-                         "g--", linewidth=3.0)
-                ax1.plot(self.trackobj.raceline[:self.trackobj.zone_inds["drs1_d"], 0],
-                         self.trackobj.raceline[:self.trackobj.zone_inds["drs1_d"], 1],
-                         "g--", linewidth=3.0)
+                ax1.plot(
+                    self.trackobj.raceline[self.trackobj.zone_inds["drs1_a"] :, 0],
+                    self.trackobj.raceline[self.trackobj.zone_inds["drs1_a"] :, 1],
+                    "g--",
+                    linewidth=3.0,
+                )
+                ax1.plot(
+                    self.trackobj.raceline[: self.trackobj.zone_inds["drs1_d"], 0],
+                    self.trackobj.raceline[: self.trackobj.zone_inds["drs1_d"], 1],
+                    "g--",
+                    linewidth=3.0,
+                )
 
         if self.trackobj.pars_track["use_drs2"]:
             if self.trackobj.zone_inds["drs2_a"] < self.trackobj.zone_inds["drs2_d"]:
                 # common case
-                ax1.plot(self.trackobj.raceline[self.trackobj.zone_inds["drs2_a"]:self.trackobj.zone_inds["drs2_d"], 0],
-                         self.trackobj.raceline[self.trackobj.zone_inds["drs2_a"]:self.trackobj.zone_inds["drs2_d"], 1],
-                         "g--", linewidth=3.0)
+                ax1.plot(
+                    self.trackobj.raceline[
+                        self.trackobj.zone_inds["drs2_a"] : self.trackobj.zone_inds[
+                            "drs2_d"
+                        ],
+                        0,
+                    ],
+                    self.trackobj.raceline[
+                        self.trackobj.zone_inds["drs2_a"] : self.trackobj.zone_inds[
+                            "drs2_d"
+                        ],
+                        1,
+                    ],
+                    "g--",
+                    linewidth=3.0,
+                )
             else:
                 # DRS zone is split by start/finish line
-                ax1.plot(self.trackobj.raceline[self.trackobj.zone_inds["drs2_a"]:, 0],
-                         self.trackobj.raceline[self.trackobj.zone_inds["drs2_a"]:, 1],
-                         "g--", linewidth=3.0)
-                ax1.plot(self.trackobj.raceline[:self.trackobj.zone_inds["drs2_d"], 0],
-                         self.trackobj.raceline[:self.trackobj.zone_inds["drs2_d"], 1],
-                         "g--", linewidth=3.0)
+                ax1.plot(
+                    self.trackobj.raceline[self.trackobj.zone_inds["drs2_a"] :, 0],
+                    self.trackobj.raceline[self.trackobj.zone_inds["drs2_a"] :, 1],
+                    "g--",
+                    linewidth=3.0,
+                )
+                ax1.plot(
+                    self.trackobj.raceline[: self.trackobj.zone_inds["drs2_d"], 0],
+                    self.trackobj.raceline[: self.trackobj.zone_inds["drs2_d"], 1],
+                    "g--",
+                    linewidth=3.0,
+                )
 
         # plot yellow sectors
         if self.driverobj.pars_driver["yellow_s1"]:
-            ax1.plot(self.trackobj.raceline[:self.trackobj.zone_inds["s12"], 0],
-                     self.trackobj.raceline[:self.trackobj.zone_inds["s12"], 1],
-                     "y--")
+            ax1.plot(
+                self.trackobj.raceline[: self.trackobj.zone_inds["s12"], 0],
+                self.trackobj.raceline[: self.trackobj.zone_inds["s12"], 1],
+                "y--",
+            )
         if self.driverobj.pars_driver["yellow_s2"]:
-            ax1.plot(self.trackobj.raceline[self.trackobj.zone_inds["s12"]:self.trackobj.zone_inds["s23"], 0],
-                     self.trackobj.raceline[self.trackobj.zone_inds["s12"]:self.trackobj.zone_inds["s23"], 1],
-                     "y--")
+            ax1.plot(
+                self.trackobj.raceline[
+                    self.trackobj.zone_inds["s12"] : self.trackobj.zone_inds["s23"], 0
+                ],
+                self.trackobj.raceline[
+                    self.trackobj.zone_inds["s12"] : self.trackobj.zone_inds["s23"], 1
+                ],
+                "y--",
+            )
         if self.driverobj.pars_driver["yellow_s3"]:
-            ax1.plot(self.trackobj.raceline[self.trackobj.zone_inds["s23"]:, 0],
-                     self.trackobj.raceline[self.trackobj.zone_inds["s23"]:, 1],
-                     "y--")
+            ax1.plot(
+                self.trackobj.raceline[self.trackobj.zone_inds["s23"] :, 0],
+                self.trackobj.raceline[self.trackobj.zone_inds["s23"] :, 1],
+                "y--",
+            )
 
         # plot pit
         if self.trackobj.pars_track["use_pit"]:
-            ax1.plot(self.trackobj.raceline[:self.trackobj.zone_inds["pit_out"], 0],
-                     self.trackobj.raceline[:self.trackobj.zone_inds["pit_out"], 1],
-                     "r--", linewidth=3.0)
-            ax1.plot(self.trackobj.raceline[self.trackobj.zone_inds["pit_in"]:, 0],
-                     self.trackobj.raceline[self.trackobj.zone_inds["pit_in"]:, 1],
-                     "r--", linewidth=3.0)
+            ax1.plot(
+                self.trackobj.raceline[: self.trackobj.zone_inds["pit_out"], 0],
+                self.trackobj.raceline[: self.trackobj.zone_inds["pit_out"], 1],
+                "r--",
+                linewidth=3.0,
+            )
+            ax1.plot(
+                self.trackobj.raceline[self.trackobj.zone_inds["pit_in"] :, 0],
+                self.trackobj.raceline[self.trackobj.zone_inds["pit_in"] :, 1],
+                "r--",
+                linewidth=3.0,
+            )
 
         # plot arrow showing the driving direction
-        ax1.arrow(self.trackobj.raceline[0, 0], self.trackobj.raceline[0, 1],
-                  self.trackobj.raceline[10, 0] - self.trackobj.raceline[0, 0],
-                  self.trackobj.raceline[10, 1] - self.trackobj.raceline[0, 1],
-                  head_width=30.0, width=10.0)
+        ax1.arrow(
+            self.trackobj.raceline[0, 0],
+            self.trackobj.raceline[0, 1],
+            self.trackobj.raceline[10, 0] - self.trackobj.raceline[0, 0],
+            self.trackobj.raceline[10, 1] - self.trackobj.raceline[0, 1],
+            head_width=30.0,
+            width=10.0,
+        )
 
         # plot dots at start/finish and at the sector boundaries
-        ax1.plot(self.trackobj.raceline[0, 0], self.trackobj.raceline[0, 1], "k.", markersize=13.0)
-        ax1.plot(self.trackobj.raceline[self.trackobj.zone_inds["s12"], 0],
-                 self.trackobj.raceline[self.trackobj.zone_inds["s12"], 1], "k.", markersize=13.0)
-        ax1.plot(self.trackobj.raceline[self.trackobj.zone_inds["s23"], 0],
-                 self.trackobj.raceline[self.trackobj.zone_inds["s23"], 1], "k.", markersize=13.0)
+        ax1.plot(
+            self.trackobj.raceline[0, 0],
+            self.trackobj.raceline[0, 1],
+            "k.",
+            markersize=13.0,
+        )
+        ax1.plot(
+            self.trackobj.raceline[self.trackobj.zone_inds["s12"], 0],
+            self.trackobj.raceline[self.trackobj.zone_inds["s12"], 1],
+            "k.",
+            markersize=13.0,
+        )
+        ax1.plot(
+            self.trackobj.raceline[self.trackobj.zone_inds["s23"], 0],
+            self.trackobj.raceline[self.trackobj.zone_inds["s23"], 1],
+            "k.",
+            markersize=13.0,
+        )
 
         # plot velocity dependent colors into track map
         cmap = plt.get_cmap("RdYlGn")
-        normalize = plt.Normalize(vmin=-np.amax(self.vel_cl), vmax=-np.amin(self.vel_cl))
+        normalize = plt.Normalize(
+            vmin=-np.amax(self.vel_cl), vmax=-np.amin(self.vel_cl)
+        )
         colors = [cmap(normalize(cur_vel)) for cur_vel in -self.vel_cl[:-1]]
-        ax1.scatter(self.trackobj.raceline[:, 0], self.trackobj.raceline[:, 1], c=colors, s=5)
+        ax1.scatter(
+            self.trackobj.raceline[:, 0], self.trackobj.raceline[:, 1], c=colors, s=5
+        )
 
         plt.axis("equal")
         plt.title("track map: " + self.trackobj.pars_track["trackname"])

@@ -27,15 +27,20 @@ class CarElectric(Car):
     # CONSTRUCTOR ------------------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
 
-    def __init__(self, parfilepath: str):
+    def __init__(self, parfilepath: str = None, pars_veh: dict = None):
 
-        # load vehicle parameters
-        parser = configparser.ConfigParser()
-
-        if not parser.read(parfilepath):
-            raise RuntimeError('Specified config file does not exist or is empty!')
-
-        pars_veh_tmp = json.loads(parser.get('VEH_PARS', 'veh_pars'))
+        # load vehicle parameters from file or use provided dict
+        if pars_veh is not None:
+            # Use provided parameters directly (deep copy to avoid modifying original)
+            import copy
+            pars_veh_tmp = copy.deepcopy(pars_veh)
+        elif parfilepath is not None:
+            parser = configparser.ConfigParser()
+            if not parser.read(parfilepath):
+                raise RuntimeError('Specified config file does not exist or is empty!')
+            pars_veh_tmp = json.loads(parser.get('VEH_PARS', 'veh_pars'))
+        else:
+            raise RuntimeError('Either parfilepath or pars_veh must be provided!')
 
         # unit conversions
         for i, item in enumerate(pars_veh_tmp["gearbox"]["n_shift"]):
