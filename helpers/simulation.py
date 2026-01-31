@@ -12,6 +12,33 @@ from typing import Optional
 import main_laptimesim
 
 
+def _smooth_array(arr: np.ndarray, window: int = 11) -> np.ndarray:
+    """Apply moving average smoothing to an array."""
+    if len(arr) < window:
+        return arr
+    if window % 2 == 0:
+        window += 1
+    return np.convolve(arr, np.ones(window) / window, mode='same')
+
+
+def _compute_accelerations(velocity: np.ndarray, distance: np.ndarray, curvature: np.ndarray):
+    """
+    Compute longitudinal and lateral accelerations.
+
+    Returns:
+        Tuple of (longitudinal_acceleration, lateral_acceleration) in m/s²
+    """
+    # Longitudinal acceleration: a = v * dv/ds
+    dv_ds = np.gradient(velocity, distance)
+    acceleration = velocity * dv_ds
+
+    # Lateral acceleration: a_lat = v^2 * kappa, with smoothing
+    lat_acceleration_raw = velocity ** 2 * np.abs(curvature)
+    lat_acceleration = _smooth_array(lat_acceleration_raw)
+
+    return acceleration, lat_acceleration
+
+
 # Series-specific configuration
 SERIES_CONFIG = {
     "F1": {
@@ -206,13 +233,11 @@ def run_simulation(
     velocity_unclosed = lap.vel_cl[:no_points]
     distance_unclosed = lap.trackobj.dists_cl[:no_points]
 
-    # Compute longitudinal acceleration: a = v * dv/ds
-    dv_ds = np.gradient(velocity_unclosed, distance_unclosed)
-    acceleration = velocity_unclosed * dv_ds
-
-    # Compute lateral acceleration: a_lat = v^2 * kappa
+    # Compute accelerations
     curvature = lap.trackobj.kappa
-    lat_acceleration = velocity_unclosed ** 2 * np.abs(curvature)
+    acceleration, lat_acceleration = _compute_accelerations(
+        velocity_unclosed, distance_unclosed, curvature
+    )
 
     # Get gear data
     gear = lap.gear_cl[:no_points]
@@ -298,13 +323,11 @@ def run_simulation_advanced(
     velocity_unclosed = lap.vel_cl[:no_points]
     distance_unclosed = lap.trackobj.dists_cl[:no_points]
 
-    # Compute longitudinal acceleration: a = v * dv/ds
-    dv_ds = np.gradient(velocity_unclosed, distance_unclosed)
-    acceleration = velocity_unclosed * dv_ds
-
-    # Compute lateral acceleration: a_lat = v^2 * kappa
+    # Compute accelerations
     curvature = lap.trackobj.kappa
-    lat_acceleration = velocity_unclosed ** 2 * np.abs(curvature)
+    acceleration, lat_acceleration = _compute_accelerations(
+        velocity_unclosed, distance_unclosed, curvature
+    )
 
     # Get gear data
     gear = lap.gear_cl[:no_points]

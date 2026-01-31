@@ -14,10 +14,11 @@ from helpers.simulation import SimulationResult
 
 def get_viz_options(result: SimulationResult) -> dict:
     """Get available visualization options for a simulation result."""
+    G = 9.81  # m/s²
     return {
         "Velocity": {"data": result.velocity_kmh, "unit": "km/h", "colorscale": "RdYlGn"},
-        "Acceleration": {"data": result.acceleration, "unit": "m/s²", "colorscale": "RdBu_r"},
-        "Lateral Acceleration": {"data": result.lat_acceleration, "unit": "m/s²", "colorscale": "Viridis"},
+        "Acceleration": {"data": result.acceleration / G, "unit": "g", "colorscale": "RdBu_r"},
+        "Lateral Acceleration": {"data": result.lat_acceleration / G, "unit": "g", "colorscale": "Viridis"},
         "Curvature": {"data": np.abs(result.curvature), "unit": "rad/m", "colorscale": "Plasma"},
         "Gear": {"data": result.gear.astype(float), "unit": "", "colorscale": "Turbo"},
     }
