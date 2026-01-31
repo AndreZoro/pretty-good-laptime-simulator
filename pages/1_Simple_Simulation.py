@@ -5,11 +5,10 @@ Basic lap time simulation with minimal configuration options.
 """
 
 import streamlit as st
-import plotly.graph_objects as go
-import plotly.express as px
 import numpy as np
 
 from helpers.simulation import run_simulation, get_available_tracks, SERIES_CONFIG
+from helpers.visualization import render_simulation_plots
 
 st.set_page_config(
     page_title="Simple Simulation - Laptime Sim",
@@ -119,86 +118,30 @@ if st.session_state.simple_result is not None:
     with col3:
         st.metric("Energy Used", f"{result.energy_consumed:.1f} kJ")
 
-    # Velocity profile chart
-    st.header("Velocity Profile")
-    fig_vel = go.Figure()
-    fig_vel.add_trace(go.Scatter(
-        x=result.distance,
-        y=result.velocity_kmh,
-        mode='lines',
-        name='Velocity',
-        line=dict(color='#1f77b4', width=2),
-        fill='tozeroy',
-        fillcolor='rgba(31, 119, 180, 0.2)',
-    ))
-    fig_vel.update_layout(
-        xaxis_title="Distance [m]",
-        yaxis_title="Velocity [km/h]",
-        hovermode='x unified',
-        height=400,
-    )
-    st.plotly_chart(fig_vel, width="stretch")
 
-    # Track map with velocity coloring
-    st.header("Track Map")
-
-    # Normalize velocity for color mapping
-    vel_normalized = (result.velocity_kmh - np.min(result.velocity_kmh)) / (
-        np.max(result.velocity_kmh) - np.min(result.velocity_kmh)
-    )
-
-    fig_track = go.Figure()
-
-    # Plot track segments colored by velocity
-    for i in range(len(result.track_x) - 1):
-        color = px.colors.sample_colorscale(
-            'RdYlGn',
-            vel_normalized[i]
-        )[0]
-        fig_track.add_trace(go.Scatter(
-            x=result.track_x[i:i+2],
-            y=result.track_y[i:i+2],
-            mode='lines',
-            line=dict(color=color, width=4),
-            showlegend=False,
-            hoverinfo='skip',
-        ))
-
-    # Add start/finish marker
-    fig_track.add_trace(go.Scatter(
-        x=[result.track_x[0]],
-        y=[result.track_y[0]],
-        mode='markers',
-        marker=dict(size=12, color='white', line=dict(color='black', width=2)),
-        name='Start/Finish',
-    ))
-
-    fig_track.update_layout(
-        xaxis_title="X [m]",
-        yaxis_title="Y [m]",
-        height=500,
-        yaxis=dict(scaleanchor="x", scaleratio=1),
-    )
-    st.plotly_chart(fig_track, width="stretch")
-
-    # Color scale legend
-    st.caption(f"🔴 Low speed ({np.min(result.velocity_kmh):.0f} km/h) → 🟢 High speed ({np.max(result.velocity_kmh):.0f} km/h)")
+    # Render profile chart and track map
+    render_simulation_plots(result, key_prefix="simple_")
 
 else:
     # Initial state - show instructions
     st.info("👈 Configure parameters in the sidebar and click **Run Simulation** to start.")
 
-    st.markdown("""
-    ### Quick Start
+    e_col1, e_col2, = st.columns(2)
 
-    1. **Select a track** from the dropdown
-    2. **Choose the series** (F1 for Formula 1, FE for Formula E)
-    3. **Adjust weather** if desired (lower = more slippery)
-    4. Click **Run Simulation**
+    with e_col1:
+        st.markdown("""
+        ### Quick Start
 
-    ### What you'll see
+        1. **Select a track** from the dropdown
+        2. **Choose the series** (F1 for Formula 1, FE for Formula E)
+        3. **Adjust weather** if desired (lower = more slippery)
+        4. Click **Run Simulation**
+        """)
+    with e_col2:
+        st.markdown("""
+        ### What you'll see
 
-    - **Lap Time** - Total time and sector breakdown
-    - **Velocity Profile** - Speed throughout the lap
-    - **Track Map** - Circuit colored by velocity (red=slow, green=fast)
-    """)
+        - **Lap Time** - Total time and sector breakdown
+        - **Velocity Profile** - Speed throughout the lap
+        - **Track Map** - Circuit colored by velocity (red=slow, green=fast)
+        """)

@@ -154,8 +154,11 @@ def main(
             raise IOError("Unknown racing series!")
     else:
         # Load from file
+        vehicle_filename = solver_opts["vehicle"]
+        if not vehicle_filename.endswith(".ini"):
+            vehicle_filename += ".ini"
         parfilepath = os.path.join(
-            repo_path, "laptimesim", "input", "vehicles", solver_opts["vehicle"]
+            repo_path, "laptimesim", "input", "vehicles", vehicle_filename
         )
         if solver_opts["series"] == "F1":
             car = laptimesim.src.car_hybrid.CarHybrid(parfilepath=parfilepath)

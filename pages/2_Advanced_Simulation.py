@@ -5,8 +5,6 @@ Full control over all simulation parameters.
 """
 
 import streamlit as st
-import plotly.graph_objects as go
-import plotly.express as px
 import numpy as np
 
 from helpers.simulation import (
@@ -15,6 +13,7 @@ from helpers.simulation import (
     get_available_vehicles,
     SERIES_CONFIG,
 )
+from helpers.visualization import render_simulation_plots
 
 st.set_page_config(
     page_title="Advanced Simulation - Laptime Sim",
@@ -433,88 +432,39 @@ if st.session_state.adv_result is not None:
     with col4:
         st.metric("Energy Used", f"{result.energy_consumed:.1f} kJ")
 
-    # Tabs for different visualizations
-    tab1, tab2 = st.tabs(["Velocity Profile", "Track Map"])
-
-    with tab1:
-        fig_vel = go.Figure()
-        fig_vel.add_trace(go.Scatter(
-            x=result.distance,
-            y=result.velocity_kmh,
-            mode='lines',
-            name='Velocity',
-            line=dict(color='#1f77b4', width=2),
-            fill='tozeroy',
-            fillcolor='rgba(31, 119, 180, 0.2)',
-        ))
-        fig_vel.update_layout(
-            xaxis_title="Distance [m]",
-            yaxis_title="Velocity [km/h]",
-            hovermode='x unified',
-            height=450,
-        )
-        st.plotly_chart(fig_vel, width="stretch")
-
-    with tab2:
-        # Normalize velocity for color mapping
-        vel_normalized = (result.velocity_kmh - np.min(result.velocity_kmh)) / (
-            np.max(result.velocity_kmh) - np.min(result.velocity_kmh)
-        )
-
-        fig_track = go.Figure()
-
-        # Plot track segments colored by velocity
-        for i in range(len(result.track_x) - 1):
-            color = px.colors.sample_colorscale('RdYlGn', vel_normalized[i])[0]
-            fig_track.add_trace(go.Scatter(
-                x=result.track_x[i:i+2],
-                y=result.track_y[i:i+2],
-                mode='lines',
-                line=dict(color=color, width=4),
-                showlegend=False,
-                hoverinfo='skip',
-            ))
-
-        # Add start/finish marker
-        fig_track.add_trace(go.Scatter(
-            x=[result.track_x[0]],
-            y=[result.track_y[0]],
-            mode='markers',
-            marker=dict(size=12, color='white', line=dict(color='black', width=2)),
-            name='Start/Finish',
-        ))
-
-        fig_track.update_layout(
-            xaxis_title="X [m]",
-            yaxis_title="Y [m]",
-            height=550,
-            yaxis=dict(scaleanchor="x", scaleratio=1),
-        )
-        st.plotly_chart(fig_track, width="stretch")
-        st.caption(f"🔴 Low speed ({np.min(result.velocity_kmh):.0f} km/h) → 🟢 High speed ({np.max(result.velocity_kmh):.0f} km/h)")
+    # Render profile chart and track map
+    render_simulation_plots(result, key_prefix="advanced_")
 
 else:
     # Initial state
     st.info("👈 Configure parameters in the sidebar and click **Run Simulation** to start.")
-
     st.markdown("""
     ### Advanced Options
 
     This page gives you full control over the simulation:
-
-    **Track Options**
-    - Flip track direction
-    - Adjust grip level for different weather
-    - Control interpolation and curvature filtering
-
-    **Vehicle & Solver**
-    - Select vehicle configuration
-    - Enable/disable DRS zones
-    - Configure solver convergence settings
-
-    **Driver & Strategy**
-    - Energy management strategy (FCFB, LBP, LS)
-    - Initial energy level
-    - Lift & coast behavior
-    - Yellow flag scenarios
     """)
+
+    ccol_1, ccol_2, ccol_3 = st.columns(3)
+
+    with ccol_1:
+        st.markdown("""
+        **Track Options**
+        - Flip track direction
+        - Adjust grip level for different weather
+        - Control interpolation and curvature filtering
+        """)
+    with ccol_2:
+        st.markdown("""
+        **Vehicle & Solver**
+        - Select vehicle configuration
+        - Enable/disable DRS zones
+        - Configure solver convergence settings
+        """)
+    with ccol_3:
+        st.markdown("""
+        **Driver & Strategy**
+        - Energy management strategy (FCFB, LBP, LS)
+        - Initial energy level
+        - Lift & coast behavior
+        - Yellow flag scenarios
+        """)

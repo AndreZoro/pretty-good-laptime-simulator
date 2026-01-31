@@ -15,12 +15,12 @@ import main_laptimesim
 # Series-specific configuration
 SERIES_CONFIG = {
     "F1": {
-        "vehicle": "F1_Shanghai.ini",
+        "vehicle": "F1_Shanghai",
         "initial_energy": 4.0e6,  # 4 MJ
         "use_drs": True,
     },
     "FE": {
-        "vehicle": "FE_Berlin.ini",
+        "vehicle": "FE_Berlin",
         "initial_energy": 4.58e6,  # 4.58 MJ
         "use_drs": False,
     },
@@ -39,6 +39,10 @@ class SimulationResult:
     distance: np.ndarray  # Distance along track [m]
     velocity: np.ndarray  # Velocity profile [m/s]
     velocity_kmh: np.ndarray  # Velocity profile [km/h]
+    acceleration: np.ndarray  # Longitudinal acceleration [m/s^2]
+    lat_acceleration: np.ndarray  # Lateral acceleration [m/s^2]
+    curvature: np.ndarray  # Track curvature [rad/m]
+    gear: np.ndarray  # Gear number
 
     # Track data
     track_x: np.ndarray  # Track x coordinates
@@ -92,14 +96,14 @@ def get_available_tracks() -> list[str]:
 
 
 def get_available_vehicles() -> list[str]:
-    """Get list of available vehicle configuration files."""
+    """Get list of available vehicle configuration names (without .ini extension)."""
     repo_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     vehicles_path = os.path.join(repo_path, "laptimesim", "input", "vehicles")
 
     vehicles = []
     for f in os.listdir(vehicles_path):
         if f.endswith(".ini"):
-            vehicles.append(f)
+            vehicles.append(f[:-4])  # Strip .ini extension
 
     return sorted(vehicles)
 
@@ -202,6 +206,17 @@ def run_simulation(
     velocity_unclosed = lap.vel_cl[:no_points]
     distance_unclosed = lap.trackobj.dists_cl[:no_points]
 
+    # Compute longitudinal acceleration: a = v * dv/ds
+    dv_ds = np.gradient(velocity_unclosed, distance_unclosed)
+    acceleration = velocity_unclosed * dv_ds
+
+    # Compute lateral acceleration: a_lat = v^2 * kappa
+    curvature = lap.trackobj.kappa
+    lat_acceleration = velocity_unclosed ** 2 * np.abs(curvature)
+
+    # Get gear data
+    gear = lap.gear_cl[:no_points]
+
     # Build result
     return SimulationResult(
         lap_time=lap.t_cl[-1],
@@ -209,6 +224,10 @@ def run_simulation(
         distance=distance_unclosed,
         velocity=velocity_unclosed,
         velocity_kmh=velocity_unclosed * 3.6,
+        acceleration=acceleration,
+        lat_acceleration=lat_acceleration,
+        curvature=curvature,
+        gear=gear,
         track_x=lap.trackobj.raceline[:, 0],
         track_y=lap.trackobj.raceline[:, 1],
         energy_consumed=lap.e_cons_cl[-1] / 1000.0,
@@ -279,6 +298,17 @@ def run_simulation_advanced(
     velocity_unclosed = lap.vel_cl[:no_points]
     distance_unclosed = lap.trackobj.dists_cl[:no_points]
 
+    # Compute longitudinal acceleration: a = v * dv/ds
+    dv_ds = np.gradient(velocity_unclosed, distance_unclosed)
+    acceleration = velocity_unclosed * dv_ds
+
+    # Compute lateral acceleration: a_lat = v^2 * kappa
+    curvature = lap.trackobj.kappa
+    lat_acceleration = velocity_unclosed ** 2 * np.abs(curvature)
+
+    # Get gear data
+    gear = lap.gear_cl[:no_points]
+
     # Build result
     return SimulationResult(
         lap_time=lap.t_cl[-1],
@@ -286,6 +316,10 @@ def run_simulation_advanced(
         distance=distance_unclosed,
         velocity=velocity_unclosed,
         velocity_kmh=velocity_unclosed * 3.6,
+        acceleration=acceleration,
+        lat_acceleration=lat_acceleration,
+        curvature=curvature,
+        gear=gear,
         track_x=lap.trackobj.raceline[:, 0],
         track_y=lap.trackobj.raceline[:, 1],
         energy_consumed=lap.e_cons_cl[-1] / 1000.0,
