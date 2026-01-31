@@ -7,16 +7,16 @@ A quasi-steady-state lap time simulation for race cars.
 import streamlit as st
 
 st.set_page_config(
-    page_title="Great LTS - Laptime Simulation with Python in Streamlit",
+    page_title="Pretty Decent LTS - Laptime Simulation with Python in Streamlit",
     page_icon="🏎️",
     layout="wide",
 )
 
-st.title("🏎️ Great LTS")
+st.title("🏎️ Decent LTS")
 
 
 st.markdown("""
-Welcome to the **Great Laptime Simulation** web interface!
+Welcome to the **Pretty Decent Laptime Simulation** web interface!
 
 This tool allows you to simulate lap times for Formula 1 and Formula E race cars
 on various circuits around the world.
