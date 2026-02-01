@@ -437,7 +437,7 @@ class Lap(object):
         # --------------------------------------------------------------------------------------------------------------
 
         # loop options
-        tol = 1e-5  # [m/s] termination criterion (must be greater than force_conv)
+        tol = self.pars_solver.get("vel_tol", 1e-4)  # [m/s] termination criterion (must be greater than force_conv)
         # force_conv = 5e-3   # [m/s] velocity malus per iteration to force convergence (should be about half of 'tol')
 
         # --------------------------------------------------------------------------------------------------------------

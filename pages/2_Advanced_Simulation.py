@@ -362,6 +362,7 @@ if run_button:
         "find_v_start": find_v_start,
         "max_no_em_iters": max_em_iters,
         "es_diff_max": es_diff_max,
+        "vel_tol": 1e-5,
         "custom_vehicle_pars": custom_vehicle_pars,
     }
 

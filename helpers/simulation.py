@@ -173,6 +173,7 @@ def run_simulation(
         "find_v_start": True,
         "max_no_em_iters": 5,
         "es_diff_max": 1.0,
+        "vel_tol": 1e-5,
     }
 
     driver_opts = {

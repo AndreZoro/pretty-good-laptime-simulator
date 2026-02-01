@@ -175,6 +175,7 @@ if run_button:
         "find_v_start": True,
         "max_no_em_iters": 5,
         "es_diff_max": 1.0,
+        "vel_tol": 1e-5,
         "custom_vehicle_pars": custom_vehicle_pars,
     }
 

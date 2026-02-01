@@ -15,7 +15,7 @@ For this mission a set of tasks has to get completed:
 - [ ] Pure drag racing mode
 - [x] Add Streamlit UI  
 - [x] Host on Streamlit  
-- [ ] Use in reverse to understand performance metrics of real world cars  
+- [x] Use in reverse to understand performance metrics of real world cars  
 
 
 ---

@@ -429,6 +429,7 @@ if __name__ == "__main__":
     # find_v_start:             determine the real velocity at start
     # max_no_em_iters:          maximum number of iterations for EM recalculation
     # es_diff_max:              [J] stop criterion -> maximum difference between two solver runs
+    # vel_tol:                  [m/s] velocity convergence tolerance (default 1e-4)
 
     solver_opts_ = {
         "vehicle": "F1_Shanghai.ini",
@@ -438,6 +439,7 @@ if __name__ == "__main__":
         "find_v_start": True,
         "max_no_em_iters": 5,
         "es_diff_max": 1.0,
+        "vel_tol": 1e-5,
     }
 
     # driver options ---------------------------------------------------------------------------------------------------
