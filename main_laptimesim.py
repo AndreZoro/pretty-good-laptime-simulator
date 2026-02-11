@@ -5,6 +5,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pickle
 
+# module-level track cache: avoids recomputing expensive spline interpolation when track parameters are unchanged
+_track_cache = {}  # key: (track_opts tuple, vel_lim_glob, yellow flags) -> Track object
+
 """
 author:
 Alexander Heilmeier (based on the term thesis of Maximilian Geisslinger)
@@ -72,7 +75,7 @@ def main(
         os.makedirs(output_path_veh_dyn_info, exist_ok=True)
 
     # ------------------------------------------------------------------------------------------------------------------
-    # CREATE TRACK INSTANCE --------------------------------------------------------------------------------------------
+    # CREATE TRACK INSTANCE (cached) ----------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
 
     parfilepath = os.path.join(
@@ -107,16 +110,35 @@ def main(
     else:
         vel_lim_glob = np.inf
 
-    # create instance
-    track = laptimesim.src.track.Track(
-        pars_track=track_opts,
-        parfilepath=parfilepath,
-        trackfilepath=trackfilepath,
-        vel_lim_glob=vel_lim_glob,
-        yellow_s1=driver_opts["yellow_s1"],
-        yellow_s2=driver_opts["yellow_s2"],
-        yellow_s3=driver_opts["yellow_s3"],
+    # build cache key from all parameters that affect track creation
+    _cache_key = (
+        track_opts["trackname"],
+        track_opts["flip_track"],
+        track_opts["mu_weather"],
+        track_opts["interp_stepsize_des"],
+        track_opts["curv_filt_width"],
+        track_opts["use_drs1"],
+        track_opts["use_drs2"],
+        track_opts["use_pit"],
+        vel_lim_glob,
+        driver_opts["yellow_s1"],
+        driver_opts["yellow_s2"],
+        driver_opts["yellow_s3"],
     )
+
+    if _cache_key in _track_cache:
+        track = _track_cache[_cache_key]
+    else:
+        track = laptimesim.src.track.Track(
+            pars_track=track_opts,
+            parfilepath=parfilepath,
+            trackfilepath=trackfilepath,
+            vel_lim_glob=vel_lim_glob,
+            yellow_s1=driver_opts["yellow_s1"],
+            yellow_s2=driver_opts["yellow_s2"],
+            yellow_s3=driver_opts["yellow_s3"],
+        )
+        _track_cache[_cache_key] = track
 
     # debug plot
     if debug_opts["use_debug_plots"]:
