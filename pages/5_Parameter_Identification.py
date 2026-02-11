@@ -1,7 +1,8 @@
 """
 Parameter Identification Page
 
-Determine vehicle aerodynamic parameters and weight from sector times.
+Determine vehicle aerodynamic parameters and weight from sector times and max velocity.
+Uses 4 targets (S1, S2, S3, v_max) to identify 4 parameters (drag, downforce, mass, power).
 """
 
 import streamlit as st
@@ -18,7 +19,7 @@ st.set_page_config(
 )
 
 st.title("🔍 Parameter Identification")
-st.caption("Determine vehicle parameters from sector times")
+st.caption("Determine vehicle parameters from sector times and max velocity")
 
 # Initialize session state
 if "param_id_result" not in st.session_state:
@@ -128,7 +129,7 @@ def build_vehicle_pars(base_config: dict, c_w_a: float, c_z_a_total: float, mass
 
 
 def run_sim_with_params(track: str, base_config: dict, c_w_a: float, c_z_a_total: float, mass: float, pow_max: float):
-    """Run simulation with given parameters and return sector times."""
+    """Run simulation with given parameters and return sector times and max velocity."""
     vehicle_pars = build_vehicle_pars(base_config, c_w_a, c_z_a_total, mass, pow_max)
 
     # Use fastest settings for parameter search (less accurate but much faster)
@@ -171,13 +172,14 @@ def run_sim_with_params(track: str, base_config: dict, c_w_a: float, c_z_a_total
 
     try:
         result = run_simulation_advanced(track_opts, solver_opts, driver_opts)
-        return result.sector_times, result.lap_time
+        v_max = float(np.max(result.velocity))  # Max velocity in m/s
+        return result.sector_times, result.lap_time, v_max
     except Exception:
-        return None, None
+        return None, None, None
 
 
 
-def run_grid_search(track, base_config, target_sectors, bounds, log_container,
+def run_grid_search(track, base_config, target_sectors, target_v_max, bounds, log_container,
                     aero_step=0.2, mass_step=5.0, power_step=10e3):
     """
     Run a coarse grid search to find approximate best parameters.
@@ -193,9 +195,14 @@ def run_grid_search(track, base_config, target_sectors, bounds, log_container,
     best_params = None
     best_sectors = None
     best_lap = None
+    best_v_max = None
 
     total = len(c_w_a_vals) * len(c_z_a_vals) * len(mass_vals) * len(pow_max_vals)
     count = 0
+
+    # Weight for v_max error: 1 m/s error ~ 0.36 s sector error (squared: ~0.13)
+    # This makes ~3 m/s v_max error equivalent to ~1 s sector error
+    v_max_weight = 0.13
 
     try:
         for c_w_a in c_w_a_vals:
@@ -208,19 +215,21 @@ def run_grid_search(track, base_config, target_sectors, bounds, log_container,
                         count += 1
                         start = time.time()
 
-                        sectors, lap_time = run_sim_with_params(track, base_config, c_w_a, c_z_a, mass, pow_max)
+                        sectors, lap_time, v_max = run_sim_with_params(track, base_config, c_w_a, c_z_a, mass, pow_max)
                         elapsed = time.time() - start
 
                         if sectors is None:
                             log_container.write(f"[{count}/{total}] FAILED - drag={c_w_a:.2f}, df={c_z_a:.2f}, m={mass:.0f}, P={pow_max/1e3:.0f}kW")
                             continue
 
-                        error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
+                        sector_error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
+                        v_max_error = v_max_weight * (v_max - target_v_max) ** 2
+                        error = sector_error + v_max_error
 
                         status = "**BEST**" if error < best_error else ""
                         log_container.write(
                             f"[{count}/{total}] drag={c_w_a:.2f}, df={c_z_a:.2f}, m={mass:.0f}, P={pow_max/1e3:.0f}kW → "
-                            f"lap={lap_time:.2f}s, err={error:.2f} ({elapsed:.1f}s) {status}"
+                            f"lap={lap_time:.2f}s, v_max={v_max*3.6:.1f}km/h, err={error:.2f} ({elapsed:.1f}s) {status}"
                         )
 
                         if error < best_error:
@@ -228,29 +237,33 @@ def run_grid_search(track, base_config, target_sectors, bounds, log_container,
                             best_params = [c_w_a, c_z_a, mass, pow_max]
                             best_sectors = sectors
                             best_lap = lap_time
+                            best_v_max = v_max
     except AbortException:
         # Log best result found before abort
         if best_params is not None:
             log_container.write(f"Best before abort: drag={best_params[0]:.2f}, df={best_params[1]:.2f}, m={best_params[2]:.0f}, P={best_params[3]/1e3:.0f}kW")
         raise
 
-    return best_params, best_sectors, best_lap, best_error
+    return best_params, best_sectors, best_lap, best_v_max, best_error
 
 
-def run_nelder_mead(track, base_config, target_sectors, initial_guess, bounds, log_container):
+def run_nelder_mead(track, base_config, target_sectors, target_v_max, initial_guess, bounds, log_container):
     """
     Run Nelder-Mead optimization starting from an initial guess.
     Faster than grid search but may find local minimum.
     Parameters are clipped to bounds.
     """
     eval_count = [0]
-    best_result = [None, None, None, float('inf')]  # [params, sectors, lap_time, error]
+    best_result = [None, None, None, None, float('inf')]  # [params, sectors, lap_time, v_max, error]
 
     # Extract bounds for clipping
     c_w_a_bounds = bounds[0]
     c_z_a_bounds = bounds[1]
     mass_bounds = bounds[2]
     pow_max_bounds = bounds[3]
+
+    # Weight for v_max error: ~3 m/s v_max error equivalent to ~1 s sector error
+    v_max_weight = 0.13
 
     def objective(params):
         # Check for abort request
@@ -265,25 +278,28 @@ def run_nelder_mead(track, base_config, target_sectors, initial_guess, bounds, l
         pow_max = np.clip(params[3], pow_max_bounds[0], pow_max_bounds[1])
 
         start = time.time()
-        sectors, lap_time = run_sim_with_params(track, base_config, c_w_a, c_z_a_total, mass, pow_max)
+        sectors, lap_time, v_max = run_sim_with_params(track, base_config, c_w_a, c_z_a_total, mass, pow_max)
         elapsed = time.time() - start
 
         if sectors is None:
             log_container.write(f"[{eval_count[0]}] FAILED - drag={c_w_a:.2f}, df={c_z_a_total:.2f}, m={mass:.0f}, P={pow_max/1e3:.0f}kW")
             return 1e6
 
-        error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
+        sector_error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
+        v_max_error = v_max_weight * (v_max - target_v_max) ** 2
+        error = sector_error + v_max_error
         log_container.write(
             f"[{eval_count[0]}] drag={c_w_a:.2f}, df={c_z_a_total:.2f}, m={mass:.0f}, P={pow_max/1e3:.0f}kW → "
-            f"lap={lap_time:.2f}s, err={error:.2f} ({elapsed:.1f}s)"
+            f"lap={lap_time:.2f}s, v_max={v_max*3.6:.1f}km/h, err={error:.2f} ({elapsed:.1f}s)"
         )
 
         # Track best result for abort case (store clipped values)
-        if error < best_result[3]:
+        if error < best_result[4]:
             best_result[0] = [c_w_a, c_z_a_total, mass, pow_max]
             best_result[1] = sectors
             best_result[2] = lap_time
-            best_result[3] = error
+            best_result[3] = v_max
+            best_result[4] = error
 
         return error
 
@@ -305,27 +321,30 @@ def run_nelder_mead(track, base_config, target_sectors, initial_guess, bounds, l
         mass = np.clip(result.x[2], mass_bounds[0], mass_bounds[1])
         pow_max = np.clip(result.x[3], pow_max_bounds[0], pow_max_bounds[1])
 
-        sectors, lap_time = run_sim_with_params(track, base_config, c_w_a, c_z_a_total, mass, pow_max)
+        sectors, lap_time, v_max = run_sim_with_params(track, base_config, c_w_a, c_z_a_total, mass, pow_max)
 
-        return [c_w_a, c_z_a_total, mass, pow_max], sectors, lap_time, result.fun
+        return [c_w_a, c_z_a_total, mass, pow_max], sectors, lap_time, v_max, result.fun
     except AbortException:
         # Return best result found so far
         raise
 
 
-def run_trust_constr(track, base_config, target_sectors, initial_guess, bounds, log_container):
+def run_trust_constr(track, base_config, target_sectors, target_v_max, initial_guess, bounds, log_container):
     """
     Run Trust-Region Constrained optimization starting from an initial guess.
     Supports bounds natively for better convergence.
     Uses normalized parameters (0-1) internally for better scaling.
     """
     eval_count = [0]
-    best_result = [None, None, None, float('inf')]  # [params, sectors, lap_time, error]
+    best_result = [None, None, None, None, float('inf')]  # [params, sectors, lap_time, v_max, error]
 
     # Extract bounds for scaling
     lower = np.array([bounds[0][0], bounds[1][0], bounds[2][0], bounds[3][0]])
     upper = np.array([bounds[0][1], bounds[1][1], bounds[2][1], bounds[3][1]])
     scale = upper - lower
+
+    # Weight for v_max error: ~3 m/s v_max error equivalent to ~1 s sector error
+    v_max_weight = 0.13
 
     def to_normalized(params):
         """Convert real parameters to normalized (0-1) space."""
@@ -352,25 +371,28 @@ def run_trust_constr(track, base_config, target_sectors, initial_guess, bounds, 
         c_w_a, c_z_a_total, mass, pow_max = real_params
 
         start = time.time()
-        sectors, lap_time = run_sim_with_params(track, base_config, c_w_a, c_z_a_total, mass, pow_max)
+        sectors, lap_time, v_max = run_sim_with_params(track, base_config, c_w_a, c_z_a_total, mass, pow_max)
         elapsed = time.time() - start
 
         if sectors is None:
             log_container.write(f"[{eval_count[0]}] FAILED - drag={c_w_a:.2f}, df={c_z_a_total:.2f}, m={mass:.0f}, P={pow_max/1e3:.0f}kW")
             return 1e6
 
-        error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
+        sector_error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
+        v_max_error = v_max_weight * (v_max - target_v_max) ** 2
+        error = sector_error + v_max_error
         log_container.write(
             f"[{eval_count[0]}] drag={c_w_a:.2f}, df={c_z_a_total:.2f}, m={mass:.0f}, P={pow_max/1e3:.0f}kW → "
-            f"lap={lap_time:.2f}s, err={error:.2f} ({elapsed:.1f}s)"
+            f"lap={lap_time:.2f}s, v_max={v_max*3.6:.1f}km/h, err={error:.2f} ({elapsed:.1f}s)"
         )
 
         # Track best result for abort case (store real values)
-        if error < best_result[3]:
+        if error < best_result[4]:
             best_result[0] = list(real_params)
             best_result[1] = sectors
             best_result[2] = lap_time
-            best_result[3] = error
+            best_result[3] = v_max
+            best_result[4] = error
 
         return error
 
@@ -390,27 +412,30 @@ def run_trust_constr(track, base_config, target_sectors, initial_guess, bounds, 
         # Convert final result back to real parameters
         real_params = to_real(result.x)
         c_w_a, c_z_a_total, mass, pow_max = real_params
-        sectors, lap_time = run_sim_with_params(track, base_config, c_w_a, c_z_a_total, mass, pow_max)
+        sectors, lap_time, v_max = run_sim_with_params(track, base_config, c_w_a, c_z_a_total, mass, pow_max)
 
-        return list(real_params), sectors, lap_time, result.fun
+        return list(real_params), sectors, lap_time, v_max, result.fun
     except AbortException:
         # Return best result found so far
         raise
 
 
-def run_lbfgsb(track, base_config, target_sectors, initial_guess, bounds, log_container):
+def run_lbfgsb(track, base_config, target_sectors, target_v_max, initial_guess, bounds, log_container):
     """
     Run L-BFGS-B optimization starting from an initial guess.
     Fast gradient-based optimizer with bounds support.
     Uses normalized parameters (0-1) internally for better scaling.
     """
     eval_count = [0]
-    best_result = [None, None, None, float('inf')]  # [params, sectors, lap_time, error]
+    best_result = [None, None, None, None, float('inf')]  # [params, sectors, lap_time, v_max, error]
 
     # Extract bounds for scaling
     lower = np.array([bounds[0][0], bounds[1][0], bounds[2][0], bounds[3][0]])
     upper = np.array([bounds[0][1], bounds[1][1], bounds[2][1], bounds[3][1]])
     scale = upper - lower
+
+    # Weight for v_max error: ~3 m/s v_max error equivalent to ~1 s sector error
+    v_max_weight = 0.13
 
     def to_normalized(params):
         """Convert real parameters to normalized (0-1) space."""
@@ -437,25 +462,28 @@ def run_lbfgsb(track, base_config, target_sectors, initial_guess, bounds, log_co
         c_w_a, c_z_a_total, mass, pow_max = real_params
 
         start = time.time()
-        sectors, lap_time = run_sim_with_params(track, base_config, c_w_a, c_z_a_total, mass, pow_max)
+        sectors, lap_time, v_max = run_sim_with_params(track, base_config, c_w_a, c_z_a_total, mass, pow_max)
         elapsed = time.time() - start
 
         if sectors is None:
             log_container.write(f"[{eval_count[0]}] FAILED - drag={c_w_a:.2f}, df={c_z_a_total:.2f}, m={mass:.0f}, P={pow_max/1e3:.0f}kW")
             return 1e6
 
-        error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
+        sector_error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
+        v_max_error = v_max_weight * (v_max - target_v_max) ** 2
+        error = sector_error + v_max_error
         log_container.write(
             f"[{eval_count[0]}] drag={c_w_a:.2f}, df={c_z_a_total:.2f}, m={mass:.0f}, P={pow_max/1e3:.0f}kW → "
-            f"lap={lap_time:.2f}s, err={error:.2f} ({elapsed:.1f}s)"
+            f"lap={lap_time:.2f}s, v_max={v_max*3.6:.1f}km/h, err={error:.2f} ({elapsed:.1f}s)"
         )
 
         # Track best result for abort case (store real values)
-        if error < best_result[3]:
+        if error < best_result[4]:
             best_result[0] = list(real_params)
             best_result[1] = sectors
             best_result[2] = lap_time
-            best_result[3] = error
+            best_result[3] = v_max
+            best_result[4] = error
 
         return error
 
@@ -475,9 +503,9 @@ def run_lbfgsb(track, base_config, target_sectors, initial_guess, bounds, log_co
         # Convert final result back to real parameters
         real_params = to_real(result.x)
         c_w_a, c_z_a_total, mass, pow_max = real_params
-        sectors, lap_time = run_sim_with_params(track, base_config, c_w_a, c_z_a_total, mass, pow_max)
+        sectors, lap_time, v_max = run_sim_with_params(track, base_config, c_w_a, c_z_a_total, mass, pow_max)
 
-        return list(real_params), sectors, lap_time, result.fun
+        return list(real_params), sectors, lap_time, v_max, result.fun
     except AbortException:
         # Return best result found so far
         raise
@@ -512,6 +540,13 @@ with col3:
 
 target_total = target_s1 + target_s2 + target_s3
 st.sidebar.caption(f"Total: **{int(target_total // 60)}:{target_total % 60:06.3f}**")
+
+st.sidebar.header("Target Max Velocity")
+target_v_max = st.sidebar.number_input(
+    "V_max [km/h]", min_value=200.0, max_value=400.0, value=320.0, step=1.0,
+    help="Speed trap / maximum velocity target. Adding this 4th constraint makes the system well-determined (4 params, 4 targets)."
+)
+target_v_max_ms = target_v_max / 3.6  # Convert to m/s
 
 st.sidebar.header("Search Method")
 search_method = st.sidebar.radio(
@@ -579,6 +614,7 @@ if run_button:
     best_params = None
     best_sectors = None
     best_lap = None
+    best_v_max = None
     best_error = None
 
     if search_method == "Grid Search":
@@ -601,8 +637,8 @@ if run_button:
             log_container = st.container()
 
             try:
-                best_params, best_sectors, best_lap, best_error = run_grid_search(
-                    track, base_config, target_sectors, bounds, log_container,
+                best_params, best_sectors, best_lap, best_v_max, best_error = run_grid_search(
+                    track, base_config, target_sectors, target_v_max_ms, bounds, log_container,
                     aero_step, mass_step, power_step
                 )
 
@@ -612,7 +648,7 @@ if run_button:
                     st.stop()
 
                 st.write("---")
-                st.write(f"Best found: drag={best_params[0]:.2f}, df={best_params[1]:.2f}, m={best_params[2]:.0f}, P={best_params[3]/1e3:.0f}kW")
+                st.write(f"Best found: drag={best_params[0]:.2f}, df={best_params[1]:.2f}, m={best_params[2]:.0f}, P={best_params[3]/1e3:.0f}kW, v_max={best_v_max*3.6:.1f}km/h")
                 status.update(label="Grid search complete!", state="complete", expanded=False)
 
             except AbortException:
@@ -634,8 +670,8 @@ if run_button:
             log_container = st.container()
 
             try:
-                best_params, best_sectors, best_lap, best_error = run_nelder_mead(
-                    track, base_config, target_sectors, initial_guess, bounds, log_container
+                best_params, best_sectors, best_lap, best_v_max, best_error = run_nelder_mead(
+                    track, base_config, target_sectors, target_v_max_ms, initial_guess, bounds, log_container
                 )
 
                 if best_params is None:
@@ -644,7 +680,7 @@ if run_button:
                     st.stop()
 
                 st.write("---")
-                st.write(f"Optimum: drag={best_params[0]:.2f}, df={best_params[1]:.2f}, m={best_params[2]:.0f}, P={best_params[3]/1e3:.0f}kW")
+                st.write(f"Optimum: drag={best_params[0]:.2f}, df={best_params[1]:.2f}, m={best_params[2]:.0f}, P={best_params[3]/1e3:.0f}kW, v_max={best_v_max*3.6:.1f}km/h")
                 status.update(label="Optimization complete!", state="complete", expanded=False)
 
             except AbortException:
@@ -666,8 +702,8 @@ if run_button:
             log_container = st.container()
 
             try:
-                best_params, best_sectors, best_lap, best_error = run_trust_constr(
-                    track, base_config, target_sectors, initial_guess, bounds, log_container
+                best_params, best_sectors, best_lap, best_v_max, best_error = run_trust_constr(
+                    track, base_config, target_sectors, target_v_max_ms, initial_guess, bounds, log_container
                 )
 
                 if best_params is None:
@@ -676,7 +712,7 @@ if run_button:
                     st.stop()
 
                 st.write("---")
-                st.write(f"Optimum: drag={best_params[0]:.2f}, df={best_params[1]:.2f}, m={best_params[2]:.0f}, P={best_params[3]/1e3:.0f}kW")
+                st.write(f"Optimum: drag={best_params[0]:.2f}, df={best_params[1]:.2f}, m={best_params[2]:.0f}, P={best_params[3]/1e3:.0f}kW, v_max={best_v_max*3.6:.1f}km/h")
                 status.update(label="Optimization complete!", state="complete", expanded=False)
 
             except AbortException:
@@ -698,8 +734,8 @@ if run_button:
             log_container = st.container()
 
             try:
-                best_params, best_sectors, best_lap, best_error = run_lbfgsb(
-                    track, base_config, target_sectors, initial_guess, bounds, log_container
+                best_params, best_sectors, best_lap, best_v_max, best_error = run_lbfgsb(
+                    track, base_config, target_sectors, target_v_max_ms, initial_guess, bounds, log_container
                 )
 
                 if best_params is None:
@@ -708,7 +744,7 @@ if run_button:
                     st.stop()
 
                 st.write("---")
-                st.write(f"Optimum: drag={best_params[0]:.2f}, df={best_params[1]:.2f}, m={best_params[2]:.0f}, P={best_params[3]/1e3:.0f}kW")
+                st.write(f"Optimum: drag={best_params[0]:.2f}, df={best_params[1]:.2f}, m={best_params[2]:.0f}, P={best_params[3]/1e3:.0f}kW, v_max={best_v_max*3.6:.1f}km/h")
                 status.update(label="Optimization complete!", state="complete", expanded=False)
 
             except AbortException:
@@ -752,6 +788,8 @@ if run_button:
         "target_sectors": target_sectors,
         "simulated_sectors": final_sectors,
         "simulated_lap": final_lap,
+        "target_v_max": target_v_max_ms,
+        "simulated_v_max": best_v_max,
         "track": track,
         "vehicle": vehicle_base,
     }
@@ -812,11 +850,24 @@ if st.session_state.param_id_result is not None:
         color = "green" if abs(total_diff) < 0.5 else "orange" if abs(total_diff) < 1.0 else "red"
         st.markdown(f"**:{color}[{total_diff:+.3f}s]**")
 
+    # Display v_max comparison
+    st.divider()
+    st.header("Max Velocity Comparison")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Target V_max", f"{res['target_v_max']*3.6:.1f} km/h")
+    with col2:
+        st.metric("Simulated V_max", f"{res['simulated_v_max']*3.6:.1f} km/h")
+    with col3:
+        v_diff = (res['simulated_v_max'] - res['target_v_max']) * 3.6
+        color = "green" if abs(v_diff) < 5 else "orange" if abs(v_diff) < 10 else "red"
+        st.markdown(f"**Difference:** :{color}[{v_diff:+.1f} km/h]")
+
     st.divider()
     st.caption(f"Track: {res['track']} | Base vehicle: {res['vehicle']}")
 
 else:
-    st.info("👈 Select a track, vehicle, and enter target sector times, then click **Find Parameters**.")
+    st.info("👈 Select a track, vehicle, enter target sector times and max velocity, then click **Find Parameters**.")
 
     col1, col2 = st.columns(2)
 
@@ -824,17 +875,21 @@ else:
         st.markdown("""
         ### How it works
 
-        This tool uses optimization to find vehicle parameters that produce
-        lap times matching your input sector times.
+        This tool uses optimization to find vehicle parameters that match
+        your input targets (3 sector times + max velocity).
 
-        **Parameters identified:**
+        **Parameters identified (4):**
         - Drag coefficient × area (c_w × A)
         - Total downforce coefficient × area (c_z × A)
         - Vehicle mass
         - Engine power (pow_max)
 
-        The front/rear downforce split is calculated automatically based on
-        the center of gravity position to maintain aerodynamic balance.
+        **Target constraints (4):**
+        - Sector 1, 2, 3 times
+        - Maximum velocity (speed trap)
+
+        Having 4 targets for 4 parameters makes the system well-determined,
+        leading to better convergence than using sector times alone.
         """)
 
     with col2:

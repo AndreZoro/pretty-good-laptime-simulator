@@ -4,10 +4,10 @@ MVRC 2026 Simulation Page
 Simulation page for the MVRC 2026 vehicle with limited parameter adjustments.
 """
 
-import streamlit as st
 import numpy as np
+import streamlit as st
 
-from helpers.simulation import run_simulation_advanced, get_available_tracks
+from helpers.simulation import get_available_tracks, run_simulation_advanced
 from helpers.visualization import render_simulation_plots
 
 st.set_page_config(
@@ -16,8 +16,14 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("🏎️ MVRC 2026")
-st.caption("Simulation for the MVRC 2026 vehicle")
+st.image(
+    "https://mantiumchallenge.com/wp-content/uploads/2016/08/mantiumchallenge.png",
+    # width=300,
+    width="stretch",
+    # caption="## MVRC 2026",
+)
+st.title("MVRC 2026")
+st.caption("Laptime Simulator for the MVRC 2026 Season")
 
 # Initialize session state
 if "mvrc_result" not in st.session_state:
@@ -92,7 +98,9 @@ pow_max = st.sidebar.number_input(
 st.sidebar.divider()
 
 # Run button
-run_button = st.sidebar.button("🚀 Run Simulation", type="primary", use_container_width=True)
+run_button = st.sidebar.button(
+    "🚀 Run Simulation", type="primary", use_container_width=True
+)
 
 # Build custom vehicle parameters based on MVRC_2026 with user modifications
 custom_vehicle_pars = {
@@ -129,7 +137,16 @@ custom_vehicle_pars = {
     },
     "gearbox": {
         "i_trans": [0.04, 0.070, 0.095, 0.117, 0.143, 0.172, 0.190, 0.206],
-        "n_shift": [10000.0, 11800.0, 11800.0, 11800.0, 11800.0, 11800.0, 11800.0, 13000.0],
+        "n_shift": [
+            10000.0,
+            11800.0,
+            11800.0,
+            11800.0,
+            11800.0,
+            11800.0,
+            11800.0,
+            13000.0,
+        ],
         "e_i": [1.16, 1.11, 1.09, 1.08, 1.08, 1.08, 1.07, 1.07],
         "eta_g": 0.96,
     },
@@ -247,7 +264,9 @@ if st.session_state.mvrc_result is not None:
 
 else:
     # Initial state - show instructions
-    st.info("👈 Select a track and adjust vehicle parameters, then click **Run Simulation**.")
+    st.info(
+        "👈 Select a track and adjust vehicle parameters, then click **Run Simulation**."
+    )
 
     col1, col2 = st.columns(2)
 

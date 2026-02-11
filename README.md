@@ -5,16 +5,16 @@ Additional packages that belong to the [project](https://github.com/TUMFTM)
 have also been downloaded into this new repo:  
 - [global_racetrajectory_optimization](https://github.com/TUMFTM/global_racetrajectory_optimization)  
 - [trajectory_planning_helpers](https://github.com/TUMFTM/trajectory_planning_helpers)  
-The intent is to upgarde it for futher applications.  
-For this mission a set of tasks has to get completed:  
+The intent is to upgrade it for futher applications.  
+For this mission, a set of tasks has to get completed:  
 - [x] Write tests  
 - [x] Update Python and used modules versions  
 - [x] Add posibilities to include various other car concepts  
-- [ ] Add more adaptive feutures such as advanced aero, ride height, boost features
+- [ ] Add more adaptive features such as advanced aero, ride height, boost features
 - [ ] Make optimized strategies for such advanced vehicles when use of devices is limited
 - [ ] Pure drag racing mode
 - [x] Add Streamlit UI  
-- [x] Host on Streamlit  
+- [x] Host on [Streamlit](https://pretty-decent-laptime-simulator.streamlit.app)  
 - [x] Use in reverse to understand performance metrics of real world cars  
 
 
