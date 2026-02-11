@@ -1,6 +1,7 @@
-import numpy as np
 import math
+
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 class Car(object):
@@ -20,19 +21,27 @@ class Car(object):
     # SLOTS ------------------------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
 
-    __slots__ = ("__powertrain_type",
-                 "__pars_general",
-                 "__pars_engine",
-                 "__pars_gearbox",
-                 "__pars_tires",
-                 "__f_z_calc_stat")
+    __slots__ = (
+        "__powertrain_type",
+        "__pars_general",
+        "__pars_engine",
+        "__pars_gearbox",
+        "__pars_tires",
+        "__f_z_calc_stat",
+    )
 
     # ------------------------------------------------------------------------------------------------------------------
     # CONSTRUCTOR ------------------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
 
-    def __init__(self, powertrain_type: str, pars_general: dict, pars_engine: dict, pars_gearbox: dict,
-                 pars_tires: dict):
+    def __init__(
+        self,
+        powertrain_type: str,
+        pars_general: dict,
+        pars_engine: dict,
+        pars_gearbox: dict,
+        pars_tires: dict,
+    ):
         self.powertrain_type = powertrain_type
         self.pars_general = pars_general
         self.pars_engine = pars_engine
@@ -49,10 +58,18 @@ class Car(object):
 
         # static load
         self.f_z_calc_stat["stat_load"] = np.zeros(4)
-        self.f_z_calc_stat["stat_load"][0] = 0.5 * m * g * self.pars_general["lr"] / l_tot
-        self.f_z_calc_stat["stat_load"][1] = 0.5 * m * g * self.pars_general["lr"] / l_tot
-        self.f_z_calc_stat["stat_load"][2] = 0.5 * m * g * self.pars_general["lf"] / l_tot
-        self.f_z_calc_stat["stat_load"][3] = 0.5 * m * g * self.pars_general["lf"] / l_tot
+        self.f_z_calc_stat["stat_load"][0] = (
+            0.5 * m * g * self.pars_general["lr"] / l_tot
+        )
+        self.f_z_calc_stat["stat_load"][1] = (
+            0.5 * m * g * self.pars_general["lr"] / l_tot
+        )
+        self.f_z_calc_stat["stat_load"][2] = (
+            0.5 * m * g * self.pars_general["lf"] / l_tot
+        )
+        self.f_z_calc_stat["stat_load"][3] = (
+            0.5 * m * g * self.pars_general["lf"] / l_tot
+        )
 
         # longitudinal load transfer
         self.f_z_calc_stat["trans_long"] = np.zeros(4)
@@ -63,44 +80,89 @@ class Car(object):
 
         # lateral load transfer
         self.f_z_calc_stat["trans_lat"] = np.zeros(4)
-        self.f_z_calc_stat["trans_lat"][0] = m * self.pars_general["lr"] / l_tot * h_cog / self.pars_general["sf"]
-        self.f_z_calc_stat["trans_lat"][1] = m * self.pars_general["lr"] / l_tot * h_cog / self.pars_general["sf"]
-        self.f_z_calc_stat["trans_lat"][2] = m * self.pars_general["lf"] / l_tot * h_cog / self.pars_general["sr"]
-        self.f_z_calc_stat["trans_lat"][3] = m * self.pars_general["lf"] / l_tot * h_cog / self.pars_general["sr"]
+        self.f_z_calc_stat["trans_lat"][0] = (
+            m * self.pars_general["lr"] / l_tot * h_cog / self.pars_general["sf"]
+        )
+        self.f_z_calc_stat["trans_lat"][1] = (
+            m * self.pars_general["lr"] / l_tot * h_cog / self.pars_general["sf"]
+        )
+        self.f_z_calc_stat["trans_lat"][2] = (
+            m * self.pars_general["lf"] / l_tot * h_cog / self.pars_general["sr"]
+        )
+        self.f_z_calc_stat["trans_lat"][3] = (
+            m * self.pars_general["lf"] / l_tot * h_cog / self.pars_general["sr"]
+        )
 
         # aero downforce
         self.f_z_calc_stat["aero"] = np.zeros(4)
-        self.f_z_calc_stat["aero"][0] = 0.5 * 0.5 * self.pars_general["c_z_a_f"] * self.pars_general["rho_air"]
-        self.f_z_calc_stat["aero"][1] = 0.5 * 0.5 * self.pars_general["c_z_a_f"] * self.pars_general["rho_air"]
-        self.f_z_calc_stat["aero"][2] = 0.5 * 0.5 * self.pars_general["c_z_a_r"] * self.pars_general["rho_air"]
-        self.f_z_calc_stat["aero"][3] = 0.5 * 0.5 * self.pars_general["c_z_a_r"] * self.pars_general["rho_air"]
+        self.f_z_calc_stat["aero"][0] = (
+            0.5 * 0.5 * self.pars_general["c_z_a_f"] * self.pars_general["rho_air"]
+        )
+        self.f_z_calc_stat["aero"][1] = (
+            0.5 * 0.5 * self.pars_general["c_z_a_f"] * self.pars_general["rho_air"]
+        )
+        self.f_z_calc_stat["aero"][2] = (
+            0.5 * 0.5 * self.pars_general["c_z_a_r"] * self.pars_general["rho_air"]
+        )
+        self.f_z_calc_stat["aero"][3] = (
+            0.5 * 0.5 * self.pars_general["c_z_a_r"] * self.pars_general["rho_air"]
+        )
+
+        # sign arrays for vectorized tire load calculation: FL=-a_x, FR=-a_x, RL=+a_x, RR=+a_x
+        self.f_z_calc_stat["trans_long_sign"] = np.array([-1.0, -1.0, 1.0, 1.0])
+        # FL=-a_y, FR=+a_y, RL=-a_y, RR=+a_y
+        self.f_z_calc_stat["trans_lat_sign"] = np.array([-1.0, 1.0, -1.0, 1.0])
 
     # ------------------------------------------------------------------------------------------------------------------
     # GETTERS / SETTERS ------------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
 
-    def __get_powertrain_type(self) -> str: return self.__powertrain_type
-    def __set_powertrain_type(self, x: str) -> None: self.__powertrain_type = x
+    def __get_powertrain_type(self) -> str:
+        return self.__powertrain_type
+
+    def __set_powertrain_type(self, x: str) -> None:
+        self.__powertrain_type = x
+
     powertrain_type = property(__get_powertrain_type, __set_powertrain_type)
 
-    def __get_pars_general(self) -> dict: return self.__pars_general
-    def __set_pars_general(self, x: dict) -> None: self.__pars_general = x
+    def __get_pars_general(self) -> dict:
+        return self.__pars_general
+
+    def __set_pars_general(self, x: dict) -> None:
+        self.__pars_general = x
+
     pars_general = property(__get_pars_general, __set_pars_general)
 
-    def __get_pars_engine(self) -> dict: return self.__pars_engine
-    def __set_pars_engine(self, x: dict) -> None: self.__pars_engine = x
+    def __get_pars_engine(self) -> dict:
+        return self.__pars_engine
+
+    def __set_pars_engine(self, x: dict) -> None:
+        self.__pars_engine = x
+
     pars_engine = property(__get_pars_engine, __set_pars_engine)
 
-    def __get_pars_gearbox(self) -> dict: return self.__pars_gearbox
-    def __set_pars_gearbox(self, x: dict) -> None: self.__pars_gearbox = x
+    def __get_pars_gearbox(self) -> dict:
+        return self.__pars_gearbox
+
+    def __set_pars_gearbox(self, x: dict) -> None:
+        self.__pars_gearbox = x
+
     pars_gearbox = property(__get_pars_gearbox, __set_pars_gearbox)
 
-    def __get_pars_tires(self) -> dict: return self.__pars_tires
-    def __set_pars_tires(self, x: dict) -> None: self.__pars_tires = x
+    def __get_pars_tires(self) -> dict:
+        return self.__pars_tires
+
+    def __set_pars_tires(self, x: dict) -> None:
+        self.__pars_tires = x
+
     pars_tires = property(__get_pars_tires, __set_pars_tires)
 
-    def __get_f_z_calc_stat(self) -> dict: return self.__f_z_calc_stat
-    def __set_f_z_calc_stat(self, x: dict) -> None: self.__f_z_calc_stat = x
+    def __get_f_z_calc_stat(self) -> dict:
+        return self.__f_z_calc_stat
+
+    def __set_f_z_calc_stat(self, x: dict) -> None:
+        self.__f_z_calc_stat = x
+
     f_z_calc_stat = property(__get_f_z_calc_stat, __set_f_z_calc_stat)
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -117,45 +179,27 @@ class Car(object):
         tire_par2 are negativ.
         """
 
-        # tire load calculation: static load, longitudinal load transfer, lateral load transfer, aero downforce
-        f_z_fl = (self.f_z_calc_stat["stat_load"][0]
-                  - a_x * self.f_z_calc_stat["trans_long"][0]
-                  - a_y * self.f_z_calc_stat["trans_lat"][0]
-                  + math.pow(vel, 2) * self.f_z_calc_stat["aero"][0])
-        f_z_fr = (self.f_z_calc_stat["stat_load"][1]
-                  - a_x * self.f_z_calc_stat["trans_long"][1]
-                  + a_y * self.f_z_calc_stat["trans_lat"][1]
-                  + math.pow(vel, 2) * self.f_z_calc_stat["aero"][1])
-        f_z_rl = (self.f_z_calc_stat["stat_load"][2]
-                  + a_x * self.f_z_calc_stat["trans_long"][2]
-                  - a_y * self.f_z_calc_stat["trans_lat"][2]
-                  + math.pow(vel, 2) * self.f_z_calc_stat["aero"][2])
-        f_z_rr = (self.f_z_calc_stat["stat_load"][3]
-                  + a_x * self.f_z_calc_stat["trans_long"][3]
-                  + a_y * self.f_z_calc_stat["trans_lat"][3]
-                  + math.pow(vel, 2) * self.f_z_calc_stat["aero"][3])
+        # cache dict lookups
+        fzcs = self.f_z_calc_stat
+        tf = self.pars_tires["f"]
+        tr = self.pars_tires["r"]
 
-        # check tire loads
-        """
-        Commented since it often happens with the FB+ solver that very high lateral accelerations and therefore tire
-        loads appear when it runs into a corner, i.e. a high curvature. As the tires limit the lateral acceleration due
-        to their limited force potential afterwards this is usually not a problem. Use the lateral acceleration plot
-        and the tire loads plot at the end of the calculation to check the validity of the lateral accelerations
-        appearing.
-        """
+        # tire load calculation: vectorized with precomputed sign arrays
+        vel_sq = vel * vel
+        f_z = (
+            fzcs["stat_load"]
+            + a_x * fzcs["trans_long_sign"] * fzcs["trans_long"]
+            + a_y * fzcs["trans_lat_sign"] * fzcs["trans_lat"]
+            + vel_sq * fzcs["aero"]
+        )
 
-        if f_z_fl < 30.0:
-            # print("WARNING: Very small tire load FL!")
-            f_z_fl = 30.0
-        if f_z_fr < 30.0:
-            # print("WARNING: Very small tire load FR!")
-            f_z_fr = 30.0
-        if f_z_rl < 30.0:
-            # print("WARNING: Very small tire load RL!")
-            f_z_rl = 30.0
-        if f_z_rr < 30.0:
-            # print("WARNING: Very small tire load RR!")
-            f_z_rr = 30.0
+        # clamp tire loads to minimum 30 N
+        np.maximum(f_z, 30.0, out=f_z)
+
+        f_z_fl = f_z[0]
+        f_z_fr = f_z[1]
+        f_z_rl = f_z[2]
+        f_z_rr = f_z[3]
 
         # tire force potentials (dmux_dfz and dmuy_dfz are negativ -> quadratic malus in the force)
         """
@@ -163,43 +207,57 @@ class Car(object):
         F_x = mu_weather/track * mu_tire(F_z) * F_z (mu_tire hereby not constant as it decreases with rising tire loads)
             = mu_weather/track * (mu_tire + dmu_tire/dF_z * (F_z - F_z0)) * F_z (dmu_tire/dF_z is negative)
         """
-        f_x_pot_fl = mu * (self.pars_tires["f"]["mux"]
-                           + self.pars_tires["f"]["dmux_dfz"] * (f_z_fl - self.pars_tires["f"]["fz_0"])) * f_z_fl
-        f_y_pot_fl = mu * (self.pars_tires["f"]["muy"]
-                           + self.pars_tires["f"]["dmuy_dfz"] * (f_z_fl - self.pars_tires["f"]["fz_0"])) * f_z_fl
+        f_x_pot_fl = mu * (tf["mux"] + tf["dmux_dfz"] * (f_z_fl - tf["fz_0"])) * f_z_fl
+        f_y_pot_fl = mu * (tf["muy"] + tf["dmuy_dfz"] * (f_z_fl - tf["fz_0"])) * f_z_fl
 
-        f_x_pot_fr = mu * (self.pars_tires["f"]["mux"]
-                           + self.pars_tires["f"]["dmux_dfz"] * (f_z_fr - self.pars_tires["f"]["fz_0"])) * f_z_fr
-        f_y_pot_fr = mu * (self.pars_tires["f"]["muy"]
-                           + self.pars_tires["f"]["dmuy_dfz"] * (f_z_fr - self.pars_tires["f"]["fz_0"])) * f_z_fr
+        f_x_pot_fr = mu * (tf["mux"] + tf["dmux_dfz"] * (f_z_fr - tf["fz_0"])) * f_z_fr
+        f_y_pot_fr = mu * (tf["muy"] + tf["dmuy_dfz"] * (f_z_fr - tf["fz_0"])) * f_z_fr
 
-        f_x_pot_rl = mu * (self.pars_tires["r"]["mux"]
-                           + self.pars_tires["r"]["dmux_dfz"] * (f_z_rl - self.pars_tires["r"]["fz_0"])) * f_z_rl
-        f_y_pot_rl = mu * (self.pars_tires["r"]["muy"]
-                           + self.pars_tires["r"]["dmuy_dfz"] * (f_z_rl - self.pars_tires["r"]["fz_0"])) * f_z_rl
+        f_x_pot_rl = mu * (tr["mux"] + tr["dmux_dfz"] * (f_z_rl - tr["fz_0"])) * f_z_rl
+        f_y_pot_rl = mu * (tr["muy"] + tr["dmuy_dfz"] * (f_z_rl - tr["fz_0"])) * f_z_rl
 
-        f_x_pot_rr = mu * (self.pars_tires["r"]["mux"]
-                           + self.pars_tires["r"]["dmux_dfz"] * (f_z_rr - self.pars_tires["r"]["fz_0"])) * f_z_rr
-        f_y_pot_rr = mu * (self.pars_tires["r"]["muy"]
-                           + self.pars_tires["r"]["dmuy_dfz"] * (f_z_rr - self.pars_tires["r"]["fz_0"])) * f_z_rr
+        f_x_pot_rr = mu * (tr["mux"] + tr["dmux_dfz"] * (f_z_rr - tr["fz_0"])) * f_z_rr
+        f_y_pot_rr = mu * (tr["muy"] + tr["dmuy_dfz"] * (f_z_rr - tr["fz_0"])) * f_z_rr
 
-        return (f_x_pot_fl, f_y_pot_fl, f_z_fl,
-                f_x_pot_fr, f_y_pot_fr, f_z_fr,
-                f_x_pot_rl, f_y_pot_rl, f_z_rl,
-                f_x_pot_rr, f_y_pot_rr, f_z_rr)
+        return (
+            f_x_pot_fl,
+            f_y_pot_fl,
+            f_z_fl,
+            f_x_pot_fr,
+            f_y_pot_fr,
+            f_z_fr,
+            f_x_pot_rl,
+            f_y_pot_rl,
+            f_z_rl,
+            f_x_pot_rr,
+            f_y_pot_rr,
+            f_z_rr,
+        )
 
     def plot_tire_characteristics(self) -> None:
         # calculate relevant data
         f_z_range = np.arange(500.0, 13000.0, 500.0)
 
-        f_x_f = (self.pars_tires["f"]["mux"]
-                 + self.pars_tires["f"]["dmux_dfz"] * (f_z_range - self.pars_tires["f"]["fz_0"])) * f_z_range
-        f_y_f = (self.pars_tires["f"]["muy"]
-                 + self.pars_tires["f"]["dmuy_dfz"] * (f_z_range - self.pars_tires["f"]["fz_0"])) * f_z_range
-        f_x_r = (self.pars_tires["r"]["mux"]
-                 + self.pars_tires["r"]["dmux_dfz"] * (f_z_range - self.pars_tires["r"]["fz_0"])) * f_z_range
-        f_y_r = (self.pars_tires["r"]["muy"]
-                 + self.pars_tires["r"]["dmuy_dfz"] * (f_z_range - self.pars_tires["r"]["fz_0"])) * f_z_range
+        f_x_f = (
+            self.pars_tires["f"]["mux"]
+            + self.pars_tires["f"]["dmux_dfz"]
+            * (f_z_range - self.pars_tires["f"]["fz_0"])
+        ) * f_z_range
+        f_y_f = (
+            self.pars_tires["f"]["muy"]
+            + self.pars_tires["f"]["dmuy_dfz"]
+            * (f_z_range - self.pars_tires["f"]["fz_0"])
+        ) * f_z_range
+        f_x_r = (
+            self.pars_tires["r"]["mux"]
+            + self.pars_tires["r"]["dmux_dfz"]
+            * (f_z_range - self.pars_tires["r"]["fz_0"])
+        ) * f_z_range
+        f_y_r = (
+            self.pars_tires["r"]["muy"]
+            + self.pars_tires["r"]["dmuy_dfz"]
+            * (f_z_range - self.pars_tires["r"]["fz_0"])
+        ) * f_z_range
 
         # plot
         plt.figure()
@@ -228,7 +286,9 @@ class Car(object):
 
         elif self.pars_engine["topology"] == "AWD":
             # use average circumreference in this case
-            tire_circ_ref = 0.5 * (self.pars_tires["f"]["circ_ref"] + self.pars_tires["r"]["circ_ref"])
+            tire_circ_ref = 0.5 * (
+                self.pars_tires["f"]["circ_ref"] + self.pars_tires["r"]["circ_ref"]
+            )
 
         else:
             raise RuntimeError("Powertrain topology unknown!")
@@ -248,9 +308,16 @@ class Car(object):
         c_w_a = self.pars_general["c_w_a"]
 
         if drs:
-            return 0.5 * (1.0 - self.pars_general["drs_factor"]) * c_w_a * rho_air * math.pow(vel, 2)
+            return (
+                0.5
+                * (1.0 - self.pars_general["drs_factor"])
+                * c_w_a
+                * rho_air
+                * vel
+                * vel
+            )
         else:
-            return 0.5 * c_w_a * rho_air * math.pow(vel, 2)
+            return 0.5 * c_w_a * rho_air * vel * vel
 
     def roll_res(self, f_z_tot: float) -> float:
         """Output is in N."""
@@ -260,12 +327,22 @@ class Car(object):
         """Lateral acceleration input in m/s^2. Output forces in N."""
 
         f_y = self.pars_general["m"] * a_y
-        f_y_f = f_y * self.pars_general["lr"] / (self.pars_general["lf"] + self.pars_general["lr"])
-        f_y_r = f_y * self.pars_general["lf"] / (self.pars_general["lf"] + self.pars_general["lr"])
+        f_y_f = (
+            f_y
+            * self.pars_general["lr"]
+            / (self.pars_general["lf"] + self.pars_general["lr"])
+        )
+        f_y_r = (
+            f_y
+            * self.pars_general["lf"]
+            / (self.pars_general["lf"] + self.pars_general["lr"])
+        )
 
         return f_y_f, f_y_r
 
-    def v_max_cornering(self, kappa: float, mu: float, vel_subtr_corner: float = 0.5) -> float:
+    def v_max_cornering(
+        self, kappa: float, mu: float, vel_subtr_corner: float = 0.5
+    ) -> float:
         """
         Curvature input in rad/m, vel_subtr_corner in m/s. This method determines the maximum drivable velocity for the
         pure cornering case, i.e. without the application of longitudinal acceleration. However, it is considered that
@@ -276,8 +353,8 @@ class Car(object):
         """
 
         # user input
-        no_steps = 546          # [-] number of steps is currently chosen such that the stepsize is 0.2 m/s
-        vel_max = 110.0         # [m/s] cover speed range up to 400 km/h
+        no_steps = 546  # [-] number of steps
+        vel_max = 110.0  # [m/s] cover speed range up to 400 km/h
 
         # create velocity array
         vel_range = np.linspace(1.0, vel_max, no_steps)
@@ -285,21 +362,28 @@ class Car(object):
         # binary search for maximum velocity
         ind_first = 0
         ind_last = vel_range.size - 1
-        ind_mid = math.ceil((ind_first + ind_last) / 2)
+        ind_mid = (ind_first + ind_last + 1) // 2
 
         while ind_first != ind_last:
             # calculate currently acting lateral acceleration and forces
-            a_y = math.pow(vel_range[ind_mid], 2) * kappa
+            a_y = vel_range[ind_mid] * vel_range[ind_mid] * kappa
             f_y_f, f_y_r = self.calc_lat_forces(a_y=a_y)
 
             # calculate tire force potentials (using a_x = 0.0 at maximum cornering)
-            f_x_pot_fl, f_y_pot_fl, f_z_fl, \
-                f_x_pot_fr, f_y_pot_fr, f_z_fr, \
-                f_x_pot_rl, f_y_pot_rl, f_z_rl, \
-                f_x_pot_rr, f_y_pot_rr, f_z_rr = self.tire_force_pots(vel=vel_range[ind_mid],
-                                                                      a_x=0.0,
-                                                                      a_y=a_y,
-                                                                      mu=mu)
+            (
+                f_x_pot_fl,
+                f_y_pot_fl,
+                f_z_fl,
+                f_x_pot_fr,
+                f_y_pot_fr,
+                f_z_fr,
+                f_x_pot_rl,
+                f_y_pot_rl,
+                f_z_rl,
+                f_x_pot_rr,
+                f_y_pot_rr,
+                f_z_rr,
+            ) = self.tire_force_pots(vel=vel_range[ind_mid], a_x=0.0, a_y=a_y, mu=mu)
 
             # calculate remaining tire potential at the driven axle(s) for longitudinal force
             """Axis-wise consideration of the lateral force potential makes sense because it is better to assume that
@@ -309,20 +393,26 @@ class Car(object):
             a kinematic vehicle model."""
 
             # check if potential is left overall and if f_x_poss is enough to overcome drag and rolling resistances
-            if math.fabs(f_y_f) < f_y_pot_fl + f_y_pot_fr and math.fabs(f_y_r) < f_y_pot_rl + f_y_pot_rr:
-                f_x_poss = self.calc_f_x_pot(f_x_pot_fl=f_x_pot_fl,
-                                             f_x_pot_fr=f_x_pot_fr,
-                                             f_x_pot_rl=f_x_pot_rl,
-                                             f_x_pot_rr=f_x_pot_rr,
-                                             f_y_pot_f=f_y_pot_fl + f_y_pot_fr,
-                                             f_y_pot_r=f_y_pot_rl + f_y_pot_rr,
-                                             f_y_f=f_y_f,
-                                             f_y_r=f_y_r,
-                                             force_use_all_wheels=False,
-                                             limit_braking_weak_side=None)
+            if (
+                abs(f_y_f) < f_y_pot_fl + f_y_pot_fr
+                and abs(f_y_r) < f_y_pot_rl + f_y_pot_rr
+            ):
+                f_x_poss = self.calc_f_x_pot(
+                    f_x_pot_fl=f_x_pot_fl,
+                    f_x_pot_fr=f_x_pot_fr,
+                    f_x_pot_rl=f_x_pot_rl,
+                    f_x_pot_rr=f_x_pot_rr,
+                    f_y_pot_f=f_y_pot_fl + f_y_pot_fr,
+                    f_y_pot_r=f_y_pot_rl + f_y_pot_rr,
+                    f_y_f=f_y_f,
+                    f_y_r=f_y_r,
+                    force_use_all_wheels=False,
+                    limit_braking_weak_side=None,
+                )
 
-                f_x_drag = (self.air_res(vel=vel_range[ind_mid], drs=False)
-                            + self.roll_res(f_z_tot=f_z_fl + f_z_fr + f_z_rl + f_z_rr))
+                f_x_drag = self.air_res(
+                    vel=vel_range[ind_mid], drs=False
+                ) + self.roll_res(f_z_tot=f_z_fl + f_z_fr + f_z_rl + f_z_rr)
 
                 if f_x_poss < f_x_drag:
                     potential_exceeded = True
@@ -341,21 +431,23 @@ class Car(object):
                 ind_last = ind_mid - 1
 
             # update middle index
-            ind_mid = math.ceil((ind_first + ind_last) / 2)
+            ind_mid = (ind_first + ind_last + 1) // 2
 
         return vel_range[ind_mid] - vel_subtr_corner
 
-    def calc_f_x_pot(self,
-                     f_x_pot_fl: float,
-                     f_x_pot_fr: float,
-                     f_x_pot_rl: float,
-                     f_x_pot_rr: float,
-                     f_y_pot_f: float,
-                     f_y_pot_r: float,
-                     f_y_f: float,
-                     f_y_r: float,
-                     force_use_all_wheels: bool = False,
-                     limit_braking_weak_side: None or str = None) -> float:
+    def calc_f_x_pot(
+        self,
+        f_x_pot_fl: float,
+        f_x_pot_fr: float,
+        f_x_pot_rl: float,
+        f_x_pot_rr: float,
+        f_y_pot_f: float,
+        f_y_pot_r: float,
+        f_y_f: float,
+        f_y_r: float,
+        force_use_all_wheels: bool = False,
+        limit_braking_weak_side: None or str = None,
+    ) -> float:
         """Calculate remaining tire potential for longitudinal force transmission considering driven axle(s). All forces
         in N. 'force_use_all_wheels' flag can be set to use this function also for braking with all four wheels.
         limit_braking_weak_side can be None, 'FA', 'RA', 'all'. This determines if the possible braking force should be
@@ -363,21 +455,24 @@ class Car(object):
         is not necessary during acceleration since a limited slip differential overcomes this problem."""
 
         exp_tmp = self.pars_tires["tire_model_exp"]
+        inv_exp = 1.0 / exp_tmp
 
         # check input
         if limit_braking_weak_side is not None and not force_use_all_wheels:
-            print("WARNING: It seems like the function is used for braking (because limit_braking_weak_side is set)"
-                  " but force_use_all_wheels is not set True!")
+            print(
+                "WARNING: It seems like the function is used for braking (because limit_braking_weak_side is set)"
+                " but force_use_all_wheels is not set True!"
+            )
 
         # determine axle potentials
         if limit_braking_weak_side is not None:
-            if limit_braking_weak_side == 'FA':
+            if limit_braking_weak_side == "FA":
                 f_x_pot_f = 2 * min(f_x_pot_fl, f_x_pot_fr)
                 f_x_pot_r = f_x_pot_rl + f_x_pot_rr
-            elif limit_braking_weak_side == 'RA':
+            elif limit_braking_weak_side == "RA":
                 f_x_pot_f = f_x_pot_fl + f_x_pot_fr
                 f_x_pot_r = 2 * min(f_x_pot_rl, f_x_pot_rr)
-            elif limit_braking_weak_side == 'all':
+            elif limit_braking_weak_side == "all":
                 f_x_pot_f = 2 * min(f_x_pot_fl, f_x_pot_fr)
                 f_x_pot_r = 2 * min(f_x_pot_rl, f_x_pot_rr)
             else:
@@ -387,28 +482,32 @@ class Car(object):
             f_x_pot_r = f_x_pot_rl + f_x_pot_rr
 
         # calculate radicands of the tire model and check if below zero (absolute values of lateral forces required)
-        radicand_f = 1 - math.pow(math.fabs(f_y_f) / f_y_pot_f, exp_tmp)
-        radicand_r = 1 - math.pow(math.fabs(f_y_r) / f_y_pot_r, exp_tmp)
+        radicand_f = 1 - (abs(f_y_f) / f_y_pot_f) ** exp_tmp
+        radicand_r = 1 - (abs(f_y_r) / f_y_pot_r) ** exp_tmp
 
-        radicand_f = max(radicand_f, 0.0)
-        radicand_r = max(radicand_r, 0.0)
+        if radicand_f < 0.0:
+            radicand_f = 0.0
+        if radicand_r < 0.0:
+            radicand_r = 0.0
 
         # calculate remaining force potential
         if self.pars_engine["topology"] == "AWD" or force_use_all_wheels:
-            f_x_poss_f = f_x_pot_f * math.pow(radicand_f, 1.0 / exp_tmp)
-            f_x_poss_r = f_x_pot_r * math.pow(radicand_r, 1.0 / exp_tmp)
+            f_x_poss_f = f_x_pot_f * radicand_f**inv_exp
+            f_x_poss_r = f_x_pot_r * radicand_r**inv_exp
         elif self.pars_engine["topology"] == "FWD":
-            f_x_poss_f = f_x_pot_f * math.pow(radicand_f, 1.0 / exp_tmp)
+            f_x_poss_f = f_x_pot_f * radicand_f**inv_exp
             f_x_poss_r = 0.0
         elif self.pars_engine["topology"] == "RWD":
             f_x_poss_f = 0.0
-            f_x_poss_r = f_x_pot_r * math.pow(radicand_r, 1.0 / exp_tmp)
+            f_x_poss_r = f_x_pot_r * radicand_r**inv_exp
         else:
             raise RuntimeError("Powertrain topology unknown!")
 
         return f_x_poss_f + f_x_poss_r
 
-    def calc_max_ax(self, vel: float, a_y: float, mu: float, f_y_f: float, f_y_r: float) -> float:
+    def calc_max_ax(
+        self, vel: float, a_y: float, mu: float, f_y_f: float, f_y_r: float
+    ) -> float:
         """Calculate maximum longitudinal acceleration at which the car stays on the track. vel in m/s, a_y in m/s^2,
         f_y_f and f_y_r in N. Using binary search technique to decrease calculation time."""
 
@@ -422,20 +521,22 @@ class Car(object):
         # binary search
         ind_first = 0
         ind_last = a_x_range.size - 1
-        ind_mid = math.ceil((ind_first + ind_last) / 2)
+        ind_mid = (ind_first + ind_last + 1) // 2
+
+        abs_f_y_f = abs(f_y_f)
+        abs_f_y_r = abs(f_y_r)
 
         while ind_first != ind_last:
             # calculate tire potentials at ind_mid
-            _, f_y_pot_fl, _, \
-                _, f_y_pot_fr, _, \
-                _, f_y_pot_rl, _, \
-                _, f_y_pot_rr, _ = self.tire_force_pots(vel=vel,
-                                                        a_x=a_x_range[ind_mid],
-                                                        a_y=a_y,
-                                                        mu=mu)
+            _, f_y_pot_fl, _, _, f_y_pot_fr, _, _, f_y_pot_rl, _, _, f_y_pot_rr, _ = (
+                self.tire_force_pots(vel=vel, a_x=a_x_range[ind_mid], a_y=a_y, mu=mu)
+            )
 
             # check if we are above or below force potential
-            if math.fabs(f_y_f) <= f_y_pot_fl + f_y_pot_fr and math.fabs(f_y_r) <= f_y_pot_rl + f_y_pot_rr:
+            if (
+                abs_f_y_f <= f_y_pot_fl + f_y_pot_fr
+                and abs_f_y_r <= f_y_pot_rl + f_y_pot_rr
+            ):
                 # case: potential is left
                 ind_first = ind_mid
             else:
@@ -443,7 +544,7 @@ class Car(object):
                 ind_last = ind_mid - 1
 
             # update middle index
-            ind_mid = math.ceil((ind_first + ind_last) / 2)
+            ind_mid = (ind_first + ind_last + 1) // 2
 
         return a_x_range[ind_mid]
 
@@ -452,14 +553,18 @@ class Car(object):
         engine rev in 1/s."""
 
         # calculate theoretical engine revs for all the gears
-        n_gears = vel / (self.__circumref_driven_tire(vel=vel) * self.pars_gearbox["i_trans"])  # [1/s]
+        n_gears = vel / (
+            self.__circumref_driven_tire(vel=vel) * self.pars_gearbox["i_trans"]
+        )  # [1/s]
 
         # find largest gear below shift revs
         shift_bool = n_gears < self.pars_gearbox["n_shift"]
 
         if np.all(~shift_bool):
             # if max rev in final gear is reached do not shift up
-            gear_ind = self.pars_gearbox["n_shift"].size - 1  # -1 due to zero based indexing
+            gear_ind = (
+                self.pars_gearbox["n_shift"].size - 1
+            )  # -1 due to zero based indexing
         else:
             # find first True value (zero based indexing of gears)
             gear_ind = int(np.argmax(shift_bool))
@@ -474,8 +579,13 @@ class Car(object):
         gear = self.find_gear(vel=vel)[0]
 
         # calculate powertrain torque
-        m_requ = (f_x * self.r_driven_tire(vel=vel) * self.pars_gearbox["i_trans"][gear]
-                  * self.pars_gearbox["e_i"][gear] / self.pars_gearbox["eta_g"])
+        m_requ = (
+            f_x
+            * self.r_driven_tire(vel=vel)
+            * self.pars_gearbox["i_trans"][gear]
+            * self.pars_gearbox["e_i"][gear]
+            / self.pars_gearbox["eta_g"]
+        )
 
         return m_requ
 

@@ -158,7 +158,7 @@ class Driver(object):
             print("WARNING: ES charge state already negative when entering EM strategy calculation!")
 
         # find indices of brake points
-        inds_brake = np.squeeze(np.argwhere(np.diff(vel_cl) < 0.0))
+        inds_brake = np.where(np.diff(vel_cl) < 0.0)[0]
 
         # calculate time until next brake point for every point (0.0 for brake points themself)
         no_points = t_cl.size - 1  # - 1 to get number of points for unclosed lap
@@ -173,11 +173,13 @@ class Driver(object):
                 t_until_brake[i] = t_cl[-1] - t_cl[i] + t_cl[ind_brake_rel]
 
         # sort t_until_brake and get indices (minus sign to sort in a descending order)
-        inds_sorted = list(np.argsort(-t_until_brake))
+        inds_sorted = np.argsort(-t_until_brake)
+        sorted_idx = 0
 
-        while es_final > 0.0 and len(inds_sorted) > 0:
-            # get current index and remove it from indices list
-            ind_cur = inds_sorted.pop(0)
+        while es_final > 0.0 and sorted_idx < len(inds_sorted):
+            # get current index
+            ind_cur = inds_sorted[sorted_idx]
+            sorted_idx += 1
 
             # check if a brake point would be used (case when too much energy available) -> if so break
             if math.isclose(t_until_brake[ind_cur], 0.0):
@@ -213,11 +215,13 @@ class Driver(object):
             print("WARNING: ES charge state already negative when entering EM strategy calculation!")
 
         # sort vel and get indices
-        inds_sorted = list(np.argsort(vel_cl[:-1]))
+        inds_sorted = np.argsort(vel_cl[:-1])
+        sorted_idx = 0
 
-        while es_final > 0.0 and len(inds_sorted) > 0:
-            # get current index and remove it from indices list
-            ind_cur = inds_sorted.pop(0)
+        while es_final > 0.0 and sorted_idx < len(inds_sorted):
+            # get current index
+            ind_cur = inds_sorted[sorted_idx]
+            sorted_idx += 1
 
             # apply boost if boost was not applied here so far
             if not self.em_boost_use[ind_cur]:
@@ -242,7 +246,7 @@ class Driver(object):
 
         no_points = vel_cl.size - 1
         vel_diffs = np.diff(vel_cl)
-        inds_neg_vel_diff = np.squeeze(np.argwhere(vel_diffs < 0.0))
+        inds_neg_vel_diff = np.where(vel_diffs < 0.0)[0]
 
         for i in inds_neg_vel_diff:
             # catch case that lift&coast starts in front of start/finish line

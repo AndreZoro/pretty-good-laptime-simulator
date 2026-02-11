@@ -463,30 +463,56 @@ class Lap(object):
         # LOOP THROUGH ALL THE POINTS ----------------------------------------------------------------------------------
         # --------------------------------------------------------------------------------------------------------------
 
+        # cache frequently accessed attributes as local variables for performance
+        vel_cl = self.vel_cl
+        t_cl = self.t_cl
+        n_cl = self.n_cl
+        es_cl = self.es_cl
+        gear_cl = self.gear_cl
+        m_eng = self.m_eng
+        m_e_motor = self.m_e_motor
+        m_requ = self.m_requ
+        e_rec_e_motor = self.e_rec_e_motor
+        tire_loads = self.tire_loads
+        carobj = self.driverobj.carobj
+        driverobj = self.driverobj
+        kappa = self.trackobj.kappa
+        mu = self.trackobj.mu
+        stepsize = self.trackobj.stepsize
+        drs = self.trackobj.drs
+        vel_lim = self.trackobj.vel_lim
+        no_points = self.trackobj.no_points
+        pars_general_m = carobj.pars_general["m"]
+        powertrain_type = carobj.powertrain_type
+        pars_solver = self.pars_solver
+        pars_driver = driverobj.pars_driver
+        throttle_pos = driverobj.throttle_pos
+        em_boost_use = driverobj.em_boost_use
+
         i = 0
         a_x = a_x_start
 
-        while i < self.trackobj.no_points:
+        while i < no_points:
             # calculate currently acting lateral acceleration and forces
-            a_y = math.pow(self.vel_cl[i], 2) * self.trackobj.kappa[i]
-            f_y_f, f_y_r = self.driverobj.carobj.calc_lat_forces(a_y=a_y)
+            a_y = vel_cl[i] * vel_cl[i] * kappa[i]
+            f_y_f, f_y_r = carobj.calc_lat_forces(a_y=a_y)
 
             # calculate tire force potentials (using a_x = 0.0 (maximum cornering) to find out if we can stay on track)
             (
                 f_x_pot_fl,
                 f_y_pot_fl,
-                self.tire_loads[i, 0],
+                tire_loads[i, 0],
                 f_x_pot_fr,
                 f_y_pot_fr,
-                self.tire_loads[i, 1],
+                tire_loads[i, 1],
                 f_x_pot_rl,
                 f_y_pot_rl,
-                self.tire_loads[i, 2],
+                tire_loads[i, 2],
                 f_x_pot_rr,
                 f_y_pot_rr,
-                self.tire_loads[i, 3],
-            ) = self.driverobj.carobj.tire_force_pots(
-                vel=self.vel_cl[i], a_x=0.0, a_y=a_y, mu=self.trackobj.mu[i]
+                tire_loads[i, 3],
+            ) = carobj.tire_force_pots(
+                vel=vel_cl[i], a_x=0.0, a_y=a_y, mu=mu[i]
             )
 
             # ----------------------------------------------------------------------------------------------------------
@@ -500,19 +526,19 @@ class Lap(object):
             a kinematic vehicle model."""
 
             if (
-                math.fabs(f_y_f) <= f_y_pot_fl + f_y_pot_fr
-                and math.fabs(f_y_r) <= f_y_pot_rl + f_y_pot_rr
-                and self.vel_cl[i] <= self.trackobj.vel_lim[i]
+                abs(f_y_f) <= f_y_pot_fl + f_y_pot_fr
+                and abs(f_y_r) <= f_y_pot_rl + f_y_pot_rr
+                and vel_cl[i] <= vel_lim[i]
             ):
                 """Since it is obviously possible to stay on track assuming no longitudinal acceleration, we need to
                 get a proper assumption of the maximum longitudinal acceleration a_x that can be handled without
                 leaving the track (the connection originates in the a_x influence to the wheel loads)."""
 
                 # obtain maximum longitudinal acceleration
-                a_x_max = self.driverobj.carobj.calc_max_ax(
-                    vel=self.vel_cl[i],
+                a_x_max = carobj.calc_max_ax(
+                    vel=vel_cl[i],
                     a_y=a_y,
-                    mu=self.trackobj.mu[i],
+                    mu=mu[i],
                     f_y_f=f_y_f,
                     f_y_r=f_y_r,
                 )
@@ -527,22 +553,22 @@ class Lap(object):
                 (
                     f_x_pot_fl,
                     f_y_pot_fl,
-                    self.tire_loads[i, 0],
+                    tire_loads[i, 0],
                     f_x_pot_fr,
                     f_y_pot_fr,
-                    self.tire_loads[i, 1],
+                    tire_loads[i, 1],
                     f_x_pot_rl,
                     f_y_pot_rl,
-                    self.tire_loads[i, 2],
+                    tire_loads[i, 2],
                     f_x_pot_rr,
                     f_y_pot_rr,
-                    self.tire_loads[i, 3],
-                ) = self.driverobj.carobj.tire_force_pots(
-                    vel=self.vel_cl[i], a_x=a_x, a_y=a_y, mu=self.trackobj.mu[i]
+                    tire_loads[i, 3],
+                ) = carobj.tire_force_pots(
+                    vel=vel_cl[i], a_x=a_x, a_y=a_y, mu=mu[i]
                 )
 
                 # calculate remaining tire potential at front and rear axle for longitudinal force transmission
-                f_x_poss = self.driverobj.carobj.calc_f_x_pot(
+                f_x_poss = carobj.calc_f_x_pot(
                     f_x_pot_fl=f_x_pot_fl,
                     f_x_pot_fr=f_x_pot_fr,
                     f_x_pot_rl=f_x_pot_rl,
@@ -556,116 +582,110 @@ class Lap(object):
                 )
 
                 # calculate torque distribution within the hybrid system (trying to reach the possible force f_x)
-                self.m_requ[i], self.m_eng[i], self.m_e_motor[i] = (
-                    self.driverobj.carobj.calc_torque_distr_f_x(
+                m_requ[i], m_eng[i], m_e_motor[i] = (
+                    carobj.calc_torque_distr_f_x(
                         f_x=f_x_poss,
-                        n=self.n_cl[i],
-                        throttle_pos=self.driverobj.throttle_pos[i],
-                        es=self.es_cl[i],
-                        em_boost_use=self.driverobj.em_boost_use[i],
-                        vel=self.vel_cl[i],
+                        n=n_cl[i],
+                        throttle_pos=throttle_pos[i],
+                        es=es_cl[i],
+                        em_boost_use=em_boost_use[i],
+                        vel=vel_cl[i],
                     )
                 )
 
                 # calculate available acceleration force in powertrain
                 f_x_powert = (
-                    self.driverobj.carobj.pars_gearbox["eta_g"]
-                    * (self.m_eng[i] + self.m_e_motor[i])
+                    carobj.pars_gearbox["eta_g"]
+                    * (m_eng[i] + m_e_motor[i])
                     / (
-                        self.driverobj.carobj.pars_gearbox["i_trans"][self.gear_cl[i]]
-                        * self.driverobj.carobj.r_driven_tire(vel=self.vel_cl[i])
-                        * self.driverobj.carobj.pars_gearbox["e_i"][self.gear_cl[i]]
+                        carobj.pars_gearbox["i_trans"][gear_cl[i]]
+                        * carobj.r_driven_tire(vel=vel_cl[i])
+                        * carobj.pars_gearbox["e_i"][gear_cl[i]]
                     )
                 )
 
                 # calculate reached longitudinal acceleration
                 a_x = (
                     f_x_powert
-                    - self.driverobj.carobj.air_res(
-                        vel=self.vel_cl[i], drs=self.trackobj.drs[i]
-                    )
-                    - self.driverobj.carobj.roll_res(
-                        f_z_tot=float(np.sum(self.tire_loads[i]))
-                    )
-                ) / self.driverobj.carobj.pars_general["m"]
+                    - carobj.air_res(vel=vel_cl[i], drs=drs[i])
+                    - carobj.roll_res(f_z_tot=tire_loads[i].sum())
+                ) / pars_general_m
 
                 # calculate velocity in the next point
-                self.vel_cl[i + 1] = math.sqrt(
-                    math.pow(self.vel_cl[i], 2) + 2 * a_x * self.trackobj.stepsize
+                vel_cl[i + 1] = math.sqrt(
+                    vel_cl[i] * vel_cl[i] + 2 * a_x * stepsize
                 )
 
                 # consider velocity limit if reaching it during this step
                 """This if statement is intended to prevent unnecessary backward loops. Therefore it should only come
                 into operation if the velocity limit is reached from below (i.e. with acceleration) during the current
                 step."""
-                if self.vel_cl[i] <= vel_lim_cl[i + 1] < self.vel_cl[i + 1]:
+                if vel_cl[i] <= vel_lim_cl[i + 1] < vel_cl[i + 1]:
                     # calculate a_x required to reach the velocity limit
                     a_x = (
-                        math.pow(vel_lim_cl[i + 1], 2) - math.pow(self.vel_cl[i], 2)
-                    ) / (2 * self.trackobj.stepsize)
+                        vel_lim_cl[i + 1] * vel_lim_cl[i + 1] - vel_cl[i] * vel_cl[i]
+                    ) / (2 * stepsize)
 
                     f_x_target = (
-                        self.driverobj.carobj.air_res(vel=self.vel_cl[i], drs=False)
-                        + self.driverobj.carobj.roll_res(
-                            f_z_tot=float(np.sum(self.tire_loads[i]))
-                        )
-                        + self.driverobj.carobj.pars_general["m"] * a_x
+                        carobj.air_res(vel=vel_cl[i], drs=False)
+                        + carobj.roll_res(f_z_tot=tire_loads[i].sum())
+                        + pars_general_m * a_x
                     )
 
                     # calculate torque distribution within the hybrid system (trying to reach the possible force f_x)
-                    self.m_requ[i], self.m_eng[i], self.m_e_motor[i] = (
-                        self.driverobj.carobj.calc_torque_distr_f_x(
+                    m_requ[i], m_eng[i], m_e_motor[i] = (
+                        carobj.calc_torque_distr_f_x(
                             f_x=f_x_target,
-                            n=self.n_cl[i],
-                            throttle_pos=self.driverobj.throttle_pos[i],
-                            es=self.es_cl[i],
-                            em_boost_use=self.driverobj.em_boost_use[i],
-                            vel=self.vel_cl[i],
+                            n=n_cl[i],
+                            throttle_pos=throttle_pos[i],
+                            es=es_cl[i],
+                            em_boost_use=em_boost_use[i],
+                            vel=vel_cl[i],
                         )
                     )
 
                     # set velocity accordingly
-                    self.vel_cl[i + 1] = vel_lim_cl[i + 1]
+                    vel_cl[i + 1] = vel_lim_cl[i + 1]
 
                 # check shifting -> calculate gear and rev in the next point
-                self.gear_cl[i + 1], self.n_cl[i + 1] = self.driverobj.carobj.find_gear(
-                    vel=self.vel_cl[i + 1]
+                gear_cl[i + 1], n_cl[i + 1] = carobj.find_gear(
+                    vel=vel_cl[i + 1]
                 )
 
                 # calculate time at start of next point
-                self.t_cl[i + 1] = self.t_cl[i] + 2 * self.trackobj.stepsize / (
-                    self.vel_cl[i] + self.vel_cl[i + 1]
+                t_cl[i + 1] = t_cl[i] + 2 * stepsize / (
+                    vel_cl[i] + vel_cl[i + 1]
                 )
 
                 # calculate energy recuperated during current step by electric turbocharger in [J] (only during acc.)
                 if (
-                    self.driverobj.carobj.powertrain_type == "hybrid"
-                    and self.driverobj.pars_driver["use_recuperation"]
+                    powertrain_type == "hybrid"
+                    and pars_driver["use_recuperation"]
                 ):
                     e_rec_etc = (
-                        self.driverobj.carobj.pars_engine["eta_etc_re"]
-                        * self.n_cl[i]
-                        * self.m_eng[i]
+                        carobj.pars_engine["eta_etc_re"]
+                        * n_cl[i]
+                        * m_eng[i]
                         * 2
                         * math.pi
-                        * (self.t_cl[i + 1] - self.t_cl[i])
+                        * (t_cl[i + 1] - t_cl[i])
                     )
                 else:
                     e_rec_etc = 0.0
 
                 # calculate energy used by e motor during current step in [J]
-                e_cons_e_motor = self.driverobj.carobj.power_demand_e_motor_drive(
-                    n=self.n_cl[i], m_e_motor=self.m_e_motor[i]
-                ) * (self.t_cl[i + 1] - self.t_cl[i])
+                e_cons_e_motor = carobj.power_demand_e_motor_drive(
+                    n=n_cl[i], m_e_motor=m_e_motor[i]
+                ) * (t_cl[i + 1] - t_cl[i])
 
                 # calculate changes in the hybrid energy storage [J]
-                self.es_cl[i + 1] = self.es_cl[i] + e_rec_etc - e_cons_e_motor
+                es_cl[i + 1] = es_cl[i] + e_rec_etc - e_cons_e_motor
 
                 if (
-                    not self.driverobj.carobj.powertrain_type == "electric"
-                    and self.es_cl[i + 1] < 0.0
+                    powertrain_type != "electric"
+                    and es_cl[i + 1] < 0.0
                 ):
-                    self.es_cl[i + 1] = 0.0
+                    es_cl[i + 1] = 0.0
 
                 # increment
                 i += 1
@@ -683,13 +703,13 @@ class Lap(object):
                     )
 
                 # get maximum current velocity depending on speed limit or lateral acceleration limit due to curvature
-                self.vel_cl[i] = min(
-                    self.driverobj.carobj.v_max_cornering(
-                        kappa=self.trackobj.kappa[i],
-                        mu=self.trackobj.mu[i],
-                        vel_subtr_corner=self.driverobj.pars_driver["vel_subtr_corner"],
+                vel_cl[i] = min(
+                    carobj.v_max_cornering(
+                        kappa=kappa[i],
+                        mu=mu[i],
+                        vel_subtr_corner=pars_driver["vel_subtr_corner"],
                     ),
-                    self.trackobj.vel_lim[i],
+                    vel_lim[i],
                 )
 
                 # ------------------------------------------------------------------------------------------------------
@@ -698,6 +718,7 @@ class Lap(object):
 
                 j = 0
                 a_x = 0.0  # reset longitudinal acceleration (almost zero during maximum cornering)
+                limit_braking_weak_side = pars_solver["limit_braking_weak_side"]
 
                 while True:
                     """Subsequent while loop is used to obtain the best possible approximaten of the velocity at the
@@ -705,22 +726,23 @@ class Lap(object):
                     counteract infinite loops convergence is forced with an increasing loop counter."""
 
                     # loop until a good approximation for the velocity in the previous point is found
-                    vel_tmp = self.vel_cl[
+                    vel_tmp = vel_cl[
                         i - j
                     ]  # [m/s] applied velocity (current point used as a starting value)
                     vel_tmp_old = 0.0  # [m/s] used to save the old value to compare for the termination criterion
-                    vels_tmp = []  # used to save velocity values to be able to calculate a mean value for convergence
+                    vel_sum = 0.0  # running sum for velocity averaging
+                    vel_count = 0  # running count for velocity averaging
                     tire_loads_tmp = np.zeros(4)  # [N] tire loads [FL, FR, RL, RR]
                     counter = 0  # [-] loop counter
 
-                    while math.fabs(vel_tmp - vel_tmp_old) > tol:
+                    while abs(vel_tmp - vel_tmp_old) > tol:
                         # increase counter and store previous value to be able to check for the termination criterion
                         counter += 1
                         vel_tmp_old = vel_tmp
 
                         # calculate lat. acceleration and forces with temporary stored velocity and previous curvature
-                        a_y = math.pow(vel_tmp, 2) * self.trackobj.kappa[i - j - 1]
-                        f_y_f, f_y_r = self.driverobj.carobj.calc_lat_forces(a_y=a_y)
+                        a_y = vel_tmp * vel_tmp * kappa[i - j - 1]
+                        f_y_f, f_y_r = carobj.calc_lat_forces(a_y=a_y)
 
                         # calculate tire force potentials
                         (
@@ -736,16 +758,16 @@ class Lap(object):
                             f_x_pot_rr,
                             f_y_pot_rr,
                             tire_loads_tmp[3],
-                        ) = self.driverobj.carobj.tire_force_pots(
+                        ) = carobj.tire_force_pots(
                             vel=vel_tmp,
                             a_x=a_x,
                             a_y=a_y,
-                            mu=self.trackobj.mu[i - j - 1],
+                            mu=mu[i - j - 1],
                         )
 
                         # calculate remaining tire potential for deceleration using all wheels
                         # assumption: potential always usable by proper brake force distribution
-                        f_x_poss = self.driverobj.carobj.calc_f_x_pot(
+                        f_x_poss = carobj.calc_f_x_pot(
                             f_x_pot_fl=f_x_pot_fl,
                             f_x_pot_fr=f_x_pot_fr,
                             f_x_pot_rl=f_x_pot_rl,
@@ -755,45 +777,40 @@ class Lap(object):
                             f_y_f=f_y_f,
                             f_y_r=f_y_r,
                             force_use_all_wheels=True,
-                            limit_braking_weak_side=self.pars_solver[
-                                "limit_braking_weak_side"
-                            ],
+                            limit_braking_weak_side=limit_braking_weak_side,
                         )
 
                         # calculate deceleration
                         a_x = (
                             -(
                                 f_x_poss
-                                + self.driverobj.carobj.air_res(vel=vel_tmp, drs=False)
-                                + self.driverobj.carobj.roll_res(
-                                    f_z_tot=float(np.sum(tire_loads_tmp))
-                                )
+                                + carobj.air_res(vel=vel_tmp, drs=False)
+                                + carobj.roll_res(f_z_tot=tire_loads_tmp.sum())
                             )
-                            / self.driverobj.carobj.pars_general["m"]
+                            / pars_general_m
                         )
 
                         # calculate previous velocity (-a_x because we go backwards and therefore need a positive
-                        # acceleration within the equation) and append it to vels_tmp
-                        vels_tmp.append(
-                            math.sqrt(
-                                math.pow(self.vel_cl[i - j], 2)
-                                + 2 * -a_x * self.trackobj.stepsize
-                            )
+                        # acceleration within the equation) and add to running sum
+                        vel_sum += math.sqrt(
+                            vel_cl[i - j] * vel_cl[i - j]
+                            + 2 * -a_x * stepsize
                         )
+                        vel_count += 1
 
                         # calculate applied velocity as average of all to get a robust convergence characteristic
-                        vel_tmp = sum(vels_tmp) / len(vels_tmp)
+                        vel_tmp = vel_sum / vel_count
 
                         # start forcing the algorithm to converge after 10 iterations by reducing the temporary velocity
                         # if counter > 10:
                         #     vel_tmp -= (counter - 10) * force_conv
 
                     # check if the calculated velocity is greater than the original one -> break the loop
-                    if vel_tmp >= self.vel_cl[i - j - 1]:
+                    if vel_tmp >= vel_cl[i - j - 1]:
                         break  # without incrementing -> i - j - 1 is last unchanged point
                     else:
-                        self.vel_cl[i - j - 1] = vel_tmp
-                        self.tire_loads[i - j - 1, :] = tire_loads_tmp
+                        vel_cl[i - j - 1] = vel_tmp
+                        tire_loads[i - j - 1, :] = tire_loads_tmp
 
                     # increment to previous point
                     j += 1
@@ -810,14 +827,12 @@ class Lap(object):
 
                 # recalculate gears and revs for all changed points including current point
                 for k in range(i - j, i + 1):
-                    self.gear_cl[k], self.n_cl[k] = self.driverobj.carobj.find_gear(
-                        vel=self.vel_cl[k]
-                    )
+                    gear_cl[k], n_cl[k] = carobj.find_gear(vel=vel_cl[k])
 
                 # recalculate lap times starting from the last unchanged point i - j - 1
                 for k in range(i - j - 1, i):
-                    self.t_cl[k + 1] = self.t_cl[k] + 2 * self.trackobj.stepsize / (
-                        self.vel_cl[k + 1] + self.vel_cl[k]
+                    t_cl[k + 1] = t_cl[k] + 2 * stepsize / (
+                        vel_cl[k + 1] + vel_cl[k]
                     )
 
                 # recalculate energy related quantities starting from the last unchanged point i - j - 1
@@ -828,21 +843,20 @@ class Lap(object):
                     # to consider the maximal possible deceleration that was used to calculate the velocity profile also
                     # in the energy calculations)
                     if k == i - j - 1:
-                        drs_tmp = self.trackobj.drs[k]
+                        drs_tmp = drs[k]
                     else:
                         drs_tmp = False
 
-                    f_x_resi = self.driverobj.carobj.air_res(
-                        vel=self.vel_cl[k], drs=drs_tmp
-                    ) + self.driverobj.carobj.roll_res(
-                        f_z_tot=float(np.sum(self.tire_loads[k]))
+                    f_x_resi = (
+                        carobj.air_res(vel=vel_cl[k], drs=drs_tmp)
+                        + carobj.roll_res(f_z_tot=tire_loads[k].sum())
                     )
 
                     # calculate the longitudinal acceleration and force required for the given velocities
                     a_x_requ = (
-                        math.pow(self.vel_cl[k + 1], 2) - math.pow(self.vel_cl[k], 2)
-                    ) / (2 * self.trackobj.stepsize)
-                    f_x_requ = self.driverobj.carobj.pars_general["m"] * a_x_requ
+                        vel_cl[k + 1] * vel_cl[k + 1] - vel_cl[k] * vel_cl[k]
+                    ) / (2 * stepsize)
+                    f_x_requ = pars_general_m * a_x_requ
 
                     # calculate force that must be provided by the powertrain (or brakes) to reach this acc. force
                     f_x_powert = f_x_requ + f_x_resi
@@ -852,23 +866,23 @@ class Lap(object):
                         """Engine demanded (this is the case if resistances must be overcome or if the car is
                         accelerating). Therefore, we have to recalculate the torque distribution and the energy storage
                         state."""
-                        self.e_rec_e_motor[k] = 0.0
+                        e_rec_e_motor[k] = 0.0
 
                         # calculate torque distribution within the hybrid system (trying to reach possible force f_x)
-                        self.m_requ[k], self.m_eng[k], self.m_e_motor[k] = (
-                            self.driverobj.carobj.calc_torque_distr_f_x(
+                        m_requ[k], m_eng[k], m_e_motor[k] = (
+                            carobj.calc_torque_distr_f_x(
                                 f_x=f_x_powert,
-                                n=self.n_cl[k],
-                                throttle_pos=self.driverobj.throttle_pos[k],
-                                es=self.es_cl[k],
-                                em_boost_use=self.driverobj.em_boost_use[k],
-                                vel=self.vel_cl[k],
+                                n=n_cl[k],
+                                throttle_pos=throttle_pos[k],
+                                es=es_cl[k],
+                                em_boost_use=em_boost_use[k],
+                                vel=vel_cl[k],
                             )
                         )
 
                         # check torques provided and requested
                         if not math.isclose(
-                            self.m_eng[k] + self.m_e_motor[k], self.m_requ[k]
+                            m_eng[k] + m_e_motor[k], m_requ[k]
                         ):
                             print(
                                 "WARNING: It seems like if the requested torque could not be supplied by the"
@@ -876,66 +890,66 @@ class Lap(object):
                                 + " the throttle position was set to 0.0 during EM strategy calculation). Be aware"
                                 + " that this fact is not considered and the further calculation is processed as if the"
                                 + " torque was supplied! The difference amounts to %.1f Nm."
-                                % (self.m_requ[k] - (self.m_eng[k] + self.m_e_motor[k]))
+                                % (m_requ[k] - (m_eng[k] + m_e_motor[k]))
                             )
 
                         # calculate energy recuperated during current step by el. turbocharger in [J] (only during acc.)
                         if (
-                            self.driverobj.carobj.powertrain_type == "hybrid"
-                            and self.driverobj.pars_driver["use_recuperation"]
+                            powertrain_type == "hybrid"
+                            and pars_driver["use_recuperation"]
                         ):
                             e_rec_etc = (
-                                self.driverobj.carobj.pars_engine["eta_etc_re"]
-                                * self.n_cl[k]
-                                * self.m_eng[k]
+                                carobj.pars_engine["eta_etc_re"]
+                                * n_cl[k]
+                                * m_eng[k]
                                 * 2
                                 * math.pi
-                                * (self.t_cl[k + 1] - self.t_cl[k])
+                                * (t_cl[k + 1] - t_cl[k])
                             )
                         else:
                             e_rec_etc = 0.0
 
                         # calculate energy used by e motor during current step in [J]
                         e_cons_e_motor = (
-                            self.driverobj.carobj.power_demand_e_motor_drive(
-                                n=self.n_cl[k], m_e_motor=self.m_e_motor[k]
+                            carobj.power_demand_e_motor_drive(
+                                n=n_cl[k], m_e_motor=m_e_motor[k]
                             )
-                            * (self.t_cl[k + 1] - self.t_cl[k])
+                            * (t_cl[k + 1] - t_cl[k])
                         )
 
                         # calculate changes in the hybrid energy storage [J]
-                        self.es_cl[k + 1] = self.es_cl[k] + e_rec_etc - e_cons_e_motor
+                        es_cl[k + 1] = es_cl[k] + e_rec_etc - e_cons_e_motor
 
                         if (
-                            not self.driverobj.carobj.powertrain_type == "electric"
-                            and self.es_cl[k + 1] < 0.0
+                            powertrain_type != "electric"
+                            and es_cl[k + 1] < 0.0
                         ):
-                            self.es_cl[k + 1] = 0.0
+                            es_cl[k + 1] = 0.0
 
                     else:
                         """Engine not demanded -> no powertrain torques required. However, we have to calculate kinetic
                         energy recuperation."""
-                        self.m_eng[k] = 0.0
-                        self.m_e_motor[k] = 0.0
-                        self.m_requ[k] = 0.0
+                        m_eng[k] = 0.0
+                        m_e_motor[k] = 0.0
+                        m_requ[k] = 0.0
 
                         # energy recuperation by e motor in [J] under the assumption of e motor being able to recuperate
                         # all kinetic energy remaining after subtraction of the resistances
                         if (
-                            np.sum(self.e_rec_e_motor) < self.e_rec_e_motor_max
-                            and self.driverobj.pars_driver["use_recuperation"]
+                            np.sum(e_rec_e_motor) < self.e_rec_e_motor_max
+                            and pars_driver["use_recuperation"]
                         ):
-                            self.e_rec_e_motor[k] = (
-                                self.driverobj.carobj.pars_engine["eta_e_motor_re"]
-                                * math.fabs(f_x_powert)
-                                * self.trackobj.stepsize
+                            e_rec_e_motor[k] = (
+                                carobj.pars_engine["eta_e_motor_re"]
+                                * abs(f_x_powert)
+                                * stepsize
                             )
 
                         else:
-                            self.e_rec_e_motor[k] = 0.0
+                            e_rec_e_motor[k] = 0.0
 
                         # update energy storage (no energy harvested in el. turbocharger while engine is not demanded)
-                        self.es_cl[k + 1] = self.es_cl[k] + self.e_rec_e_motor[k]
+                        es_cl[k + 1] = es_cl[k] + e_rec_e_motor[k]
 
                 # reset longitudinal acceleration for next step (almost zero during maximum cornering)
                 a_x = 0.0
