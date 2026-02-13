@@ -15,13 +15,35 @@ from helpers.simulation import SimulationResult
 def get_viz_options(result: SimulationResult) -> dict:
     """Get available visualization options for a simulation result."""
     G = 9.81  # m/s²
-    return {
+    options = {
         "Velocity": {"data": result.velocity_kmh, "unit": "km/h", "colorscale": "RdYlGn"},
         "Acceleration": {"data": result.acceleration / G, "unit": "g", "colorscale": "RdBu_r"},
         "Lateral Acceleration": {"data": result.lat_acceleration / G, "unit": "g", "colorscale": "Viridis"},
         "Curvature": {"data": np.abs(result.curvature), "unit": "rad/m", "colorscale": "Plasma"},
         "Gear": {"data": result.gear.astype(float), "unit": "", "colorscale": "Turbo"},
     }
+
+    if result.rpm is not None:
+        options["RPM"] = {"data": result.rpm, "unit": "rpm", "colorscale": "Inferno"}
+    if result.engine_torque is not None:
+        options["Engine Torque"] = {"data": result.engine_torque, "unit": "Nm", "colorscale": "Hot"}
+    if result.e_motor_torque is not None:
+        options["E-Motor Torque"] = {"data": result.e_motor_torque, "unit": "Nm", "colorscale": "Cividis"}
+    if result.tire_loads is not None:
+        for i, corner in enumerate(["FL", "FR", "RL", "RR"]):
+            options[f"Tire Load {corner}"] = {"data": result.tire_loads[:, i], "unit": "N", "colorscale": "YlOrRd"}
+    if result.energy_storage is not None:
+        options["Energy Storage"] = {"data": result.energy_storage, "unit": "kJ", "colorscale": "Blues"}
+    if result.fuel_consumed_profile is not None:
+        options["Fuel Consumed"] = {"data": result.fuel_consumed_profile, "unit": "kg", "colorscale": "Oranges"}
+    if result.energy_consumed_profile is not None:
+        options["Energy Consumed"] = {"data": result.energy_consumed_profile, "unit": "kJ", "colorscale": "Reds"}
+    if result.drs is not None:
+        options["DRS"] = {"data": result.drs.astype(float), "unit": "", "colorscale": "Picnic"}
+    if result.friction is not None:
+        options["Friction"] = {"data": result.friction, "unit": "μ", "colorscale": "Greens"}
+
+    return options
 
 
 def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> None:

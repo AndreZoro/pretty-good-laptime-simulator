@@ -5,6 +5,9 @@ Determine vehicle aerodynamic parameters and weight from sector times and max ve
 Uses 4 targets (S1, S2, S3, v_max) to identify 4 parameters (drag, downforce, mass, power).
 """
 
+import configparser
+import json
+import os
 import time
 
 import matplotlib.pyplot as plt
@@ -25,6 +28,7 @@ from helpers.simulation import (
     get_available_vehicles,
     run_simulation_advanced,
 )
+from helpers.visualization import render_simulation_plots
 
 st.set_page_config(
     page_title="Parameter Identification - Laptime Sim",
@@ -33,7 +37,9 @@ st.set_page_config(
 )
 
 st.title("🔍 Parameter Identification")
-st.caption("Determine vehicle parameters from sector times, max velocity, or speed traces")
+st.caption(
+    "Determine vehicle parameters from sector times, max velocity, or speed traces"
+)
 
 # Initialize session state
 if "param_id_result" not in st.session_state:
@@ -56,137 +62,20 @@ def check_abort():
         raise AbortException("Optimization aborted by user")
 
 
-# Base vehicle configurations
-VEHICLE_CONFIGS = {
-    "F1_Shanghai": {
-        "powertrain_type": "hybrid",
-        "general": {
-            "lf": 1.968,
-            "lr": 1.632,
-            "h_cog": 0.335,
-            "sf": 1.6,
-            "sr": 1.6,
-            "f_roll": 0.03,
-            "g": 9.81,
-            "rho_air": 1.18,
-            "drs_factor": 0.17,
-        },
-        "engine": {
-            "topology": "RWD",
-            "pow_max": 575e3,
-            "pow_diff": 41e3,
-            "n_begin": 10500.0,
-            "n_max": 11400.0,
-            "n_end": 12200.0,
-            "be_max": 100.0,
-            "pow_e_motor": 120e3,
-            "eta_e_motor": 0.9,
-            "eta_e_motor_re": 0.15,
-            "eta_etc_re": 0.10,
-            "vel_min_e_motor": 27.777,
-            "torque_e_motor_max": 200.0,
-        },
-        "gearbox": {
-            "i_trans": [0.04, 0.070, 0.095, 0.117, 0.143, 0.172, 0.190, 0.206],
-            "n_shift": [
-                10000.0,
-                11800.0,
-                11800.0,
-                11800.0,
-                11800.0,
-                11800.0,
-                11800.0,
-                13000.0,
-            ],
-            "e_i": [1.16, 1.11, 1.09, 1.08, 1.08, 1.08, 1.07, 1.07],
-            "eta_g": 0.96,
-        },
-        "tires": {
-            "f": {
-                "circ_ref": 2.073,
-                "fz_0": 3000.0,
-                "mux": 1.65,
-                "muy": 1.85,
-                "dmux_dfz": -5.0e-5,
-                "dmuy_dfz": -5.0e-5,
-            },
-            "r": {
-                "circ_ref": 2.073,
-                "fz_0": 3000.0,
-                "mux": 1.95,
-                "muy": 2.15,
-                "dmux_dfz": -5.0e-5,
-                "dmuy_dfz": -5.0e-5,
-            },
-            "tire_model_exp": 2.0,
-        },
-        "series": "F1",
-    },
-    "MVRC_2026": {
-        "powertrain_type": "hybrid",
-        "general": {
-            "lf": 1.557,
-            "lr": 1.842,
-            "h_cog": 0.300,
-            "sf": 1.618,
-            "sr": 1.536,
-            "f_roll": 0.03,
-            "g": 9.81,
-            "rho_air": 1.18,
-            "drs_factor": 0.17,
-        },
-        "engine": {
-            "topology": "RWD",
-            "pow_max": 575e3,
-            "pow_diff": 41e3,
-            "n_begin": 10500.0,
-            "n_max": 11400.0,
-            "n_end": 12200.0,
-            "be_max": 100.0,
-            "pow_e_motor": 120e3,
-            "eta_e_motor": 0.9,
-            "eta_e_motor_re": 0.15,
-            "eta_etc_re": 0.10,
-            "vel_min_e_motor": 27.777,
-            "torque_e_motor_max": 200.0,
-        },
-        "gearbox": {
-            "i_trans": [0.04, 0.070, 0.095, 0.117, 0.143, 0.172, 0.190, 0.206],
-            "n_shift": [
-                10000.0,
-                11800.0,
-                11800.0,
-                11800.0,
-                11800.0,
-                11800.0,
-                11800.0,
-                13000.0,
-            ],
-            "e_i": [1.16, 1.11, 1.09, 1.08, 1.08, 1.08, 1.07, 1.07],
-            "eta_g": 0.96,
-        },
-        "tires": {
-            "f": {
-                "circ_ref": 2.073,
-                "fz_0": 3000.0,
-                "mux": 1.65,
-                "muy": 1.85,
-                "dmux_dfz": -5.0e-5,
-                "dmuy_dfz": -5.0e-5,
-            },
-            "r": {
-                "circ_ref": 2.073,
-                "fz_0": 3000.0,
-                "mux": 1.95,
-                "muy": 2.15,
-                "dmux_dfz": -5.0e-5,
-                "dmuy_dfz": -5.0e-5,
-            },
-            "tire_model_exp": 2.0,
-        },
-        "series": "F1",
-    },
-}
+def load_vehicle_config(vehicle_name: str) -> dict:
+    """Load vehicle configuration from an .ini file in the vehicles directory."""
+    repo_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ini_path = os.path.join(
+        repo_path, "laptimesim", "input", "vehicles", f"{vehicle_name}.ini"
+    )
+    parser = configparser.ConfigParser()
+    if not parser.read(ini_path):
+        raise RuntimeError(f"Vehicle config file not found: {ini_path}")
+    config = json.loads(parser.get("VEH_PARS", "veh_pars"))
+    # Infer series from powertrain type
+    if "series" not in config:
+        config["series"] = "FE" if config.get("powertrain_type") == "electric" else "F1"
+    return config
 
 
 def build_vehicle_pars(
@@ -239,8 +128,8 @@ def run_sim_with_params(
         "mu_weather": 1.0,
         "interp_stepsize_des": 30.0,  # Large step = fast
         "curv_filt_width": 60.0,  # Must result in odd window size (60/30 + 1 = 3)
-        "use_drs1": False,  # Disable DRS for simplicity
-        "use_drs2": False,
+        "use_drs1": True,
+        "use_drs2": True,
         "use_pit": False,
     }
 
@@ -273,7 +162,13 @@ def run_sim_with_params(
     try:
         result = run_simulation_advanced(track_opts, solver_opts, driver_opts)
         v_max = float(np.max(result.velocity))  # Max velocity in m/s
-        return result.sector_times, result.lap_time, v_max, result.distance, result.velocity
+        return (
+            result.sector_times,
+            result.lap_time,
+            v_max,
+            result.distance,
+            result.velocity,
+        )
     except Exception:
         return None, None, None, None, None
 
@@ -329,8 +224,10 @@ def run_grid_search(
                         count += 1
                         start = time.time()
 
-                        sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
-                            track, base_config, c_w_a, c_z_a, mass, pow_max
+                        sectors, lap_time, v_max, sim_dist, sim_vel = (
+                            run_sim_with_params(
+                                track, base_config, c_w_a, c_z_a, mass, pow_max
+                            )
                         )
                         elapsed = time.time() - start
 
@@ -341,7 +238,9 @@ def run_grid_search(
                             continue
 
                         if use_trace:
-                            error = compute_trace_error(sim_dist, sim_vel, ref_distance, ref_velocity)
+                            error = compute_trace_error(
+                                sim_dist, sim_vel, ref_distance, ref_velocity
+                            )
                         else:
                             sector_error = sum(
                                 (s - t) ** 2 for s, t in zip(sectors, target_sectors)
@@ -349,7 +248,9 @@ def run_grid_search(
                             v_max_error = v_max_weight * (v_max - target_v_max) ** 2
                             error = sector_error + v_max_error
 
-                        err_label = f"RMSE={error:.2f}m/s" if use_trace else f"err={error:.2f}"
+                        err_label = (
+                            f"RMSE={error:.2f}m/s" if use_trace else f"err={error:.2f}"
+                        )
                         status = "**BEST**" if error < best_error else ""
                         log_container.write(
                             f"[{count}/{total}] drag={c_w_a:.2f}, df={c_z_a:.2f}, m={mass:.0f}, P={pow_max / 1e3:.0f}kW → "
@@ -372,7 +273,15 @@ def run_grid_search(
             )
         raise
 
-    return best_params, best_sectors, best_lap, best_v_max, best_error, best_sim_distance, best_sim_velocity
+    return (
+        best_params,
+        best_sectors,
+        best_lap,
+        best_v_max,
+        best_error,
+        best_sim_distance,
+        best_sim_velocity,
+    )
 
 
 def run_nelder_mead(
@@ -447,7 +356,7 @@ def run_nelder_mead(
         err_label = f"RMSE={error:.2f}m/s" if use_trace else f"err={error:.2f}"
         log_container.write(
             f"[{eval_count[0]}] drag={c_w_a:.2f}, df={c_z_a_total:.2f}, m={mass:.0f}, P={pow_max / 1e3:.0f}kW → "
-            f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, {err_label} ({elapsed:.1f}s)"
+            f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, {err_label} ({elapsed:.2f}s)"
         )
 
         # Track best result for abort case (store clipped values)
@@ -484,7 +393,15 @@ def run_nelder_mead(
             track, base_config, c_w_a, c_z_a_total, mass, pow_max
         )
 
-        return [c_w_a, c_z_a_total, mass, pow_max], sectors, lap_time, v_max, result.fun, sim_dist, sim_vel
+        return (
+            [c_w_a, c_z_a_total, mass, pow_max],
+            sectors,
+            lap_time,
+            v_max,
+            result.fun,
+            sim_dist,
+            sim_vel,
+        )
     except AbortException:
         raise
 
@@ -572,7 +489,7 @@ def run_trust_constr(
         err_label = f"RMSE={error:.2f}m/s" if use_trace else f"err={error:.2f}"
         log_container.write(
             f"[{eval_count[0]}] drag={c_w_a:.2f}, df={c_z_a_total:.2f}, m={mass:.0f}, P={pow_max / 1e3:.0f}kW → "
-            f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, {err_label} ({elapsed:.1f}s)"
+            f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, {err_label} ({elapsed:.2f}s)"
         )
 
         # Track best result for abort case (store real values)
@@ -607,7 +524,15 @@ def run_trust_constr(
             track, base_config, c_w_a, c_z_a_total, mass, pow_max
         )
 
-        return list(real_params), sectors, lap_time, v_max, result.fun, sim_dist, sim_vel
+        return (
+            list(real_params),
+            sectors,
+            lap_time,
+            v_max,
+            result.fun,
+            sim_dist,
+            sim_vel,
+        )
     except AbortException:
         raise
 
@@ -695,7 +620,7 @@ def run_lbfgsb(
         err_label = f"RMSE={error:.2f}m/s" if use_trace else f"err={error:.2f}"
         log_container.write(
             f"[{eval_count[0]}] drag={c_w_a:.2f}, df={c_z_a_total:.2f}, m={mass:.0f}, P={pow_max / 1e3:.0f}kW → "
-            f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, {err_label} ({elapsed:.1f}s)"
+            f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, {err_label} ({elapsed:.2f}s)"
         )
 
         # Track best result for abort case (store real values)
@@ -730,7 +655,15 @@ def run_lbfgsb(
             track, base_config, c_w_a, c_z_a_total, mass, pow_max
         )
 
-        return list(real_params), sectors, lap_time, v_max, result.fun, sim_dist, sim_vel
+        return (
+            list(real_params),
+            sectors,
+            lap_time,
+            v_max,
+            result.fun,
+            sim_dist,
+            sim_vel,
+        )
     except AbortException:
         raise
 
@@ -747,9 +680,10 @@ track = st.sidebar.selectbox(
 )
 
 # Vehicle base configuration
+available_vehicles = get_available_vehicles()
 vehicle_base = st.sidebar.selectbox(
     "Base Vehicle",
-    options=list(VEHICLE_CONFIGS.keys()),
+    options=available_vehicles,
 )
 
 # Target source toggle
@@ -784,7 +718,9 @@ if target_source == "FastF1 Telemetry":
 
         ff1_year = st.sidebar.selectbox("Year", options=get_available_years(), index=5)
         ff1_session = st.sidebar.radio(
-            "Session", options=["Q", "R"], horizontal=True,
+            "Session",
+            options=["Q", "R"],
+            horizontal=True,
             help="Q = Qualifying, R = Race",
         )
         ff1_driver = st.sidebar.text_input(
@@ -794,15 +730,23 @@ if target_source == "FastF1 Telemetry":
         )
         ff1_driver = ff1_driver.strip().upper() or None
 
-        download_button = st.sidebar.button("Download Telemetry", type="secondary", use_container_width=True)
+        download_button = st.sidebar.button(
+            "Download Telemetry", type="secondary", use_container_width=True
+        )
 
         if download_button:
             gp_name = available_gps[ff1_track]
-            with st.spinner(f"Downloading {ff1_year} {gp_name} {ff1_session} telemetry..."):
+            with st.spinner(
+                f"Downloading {ff1_year} {gp_name} {ff1_session} telemetry..."
+            ):
                 try:
-                    dist, vel, lap_time_ff1, sectors_ff1 = load_speed_trace(
+                    ff1_data = load_speed_trace(
                         ff1_year, gp_name, ff1_session, ff1_driver
                     )
+                    dist = ff1_data["distance"]
+                    vel = ff1_data["speed"]
+                    lap_time_ff1 = ff1_data["lap_time"]
+                    sectors_ff1 = ff1_data["sector_times"]
                     st.session_state.fastf1_trace = {
                         "distance": dist,
                         "velocity": vel,
@@ -814,6 +758,12 @@ if target_source == "FastF1 Telemetry":
                         "session": ff1_session,
                         "driver": ff1_driver,
                         "track": ff1_track,
+                        "throttle": ff1_data["throttle"],
+                        "brake": ff1_data["brake"],
+                        "gear": ff1_data["gear"],
+                        "rpm": ff1_data["rpm"],
+                        "drs": ff1_data["drs"],
+                        "drs_active": ff1_data["drs_active"],
                     }
                     st.sidebar.success(
                         f"Lap: {int(lap_time_ff1 // 60)}:{lap_time_ff1 % 60:06.3f} | "
@@ -849,19 +799,36 @@ if target_source == "Manual":
     col1, col2, col3 = st.sidebar.columns(3)
     with col1:
         target_s1 = st.number_input(
-            "S1 [s]", min_value=10.0, max_value=120.0, value=24.0, step=0.1, format="%.3f"
+            "S1 [s]",
+            min_value=10.0,
+            max_value=120.0,
+            value=24.0,
+            step=0.1,
+            format="%.3f",
         )
     with col2:
         target_s2 = st.number_input(
-            "S2 [s]", min_value=10.0, max_value=120.0, value=26.5, step=0.1, format="%.3f"
+            "S2 [s]",
+            min_value=10.0,
+            max_value=120.0,
+            value=26.5,
+            step=0.1,
+            format="%.3f",
         )
     with col3:
         target_s3 = st.number_input(
-            "S3 [s]", min_value=10.0, max_value=120.0, value=40.4, step=0.1, format="%.3f"
+            "S3 [s]",
+            min_value=10.0,
+            max_value=120.0,
+            value=40.4,
+            step=0.1,
+            format="%.3f",
         )
 
     target_total = target_s1 + target_s2 + target_s3
-    st.sidebar.caption(f"Total: **{int(target_total // 60)}:{target_total % 60:06.3f}**")
+    st.sidebar.caption(
+        f"Total: **{int(target_total // 60)}:{target_total % 60:06.3f}**"
+    )
 
     st.sidebar.header("Target Max Velocity")
     target_v_max = st.sidebar.number_input(
@@ -886,23 +853,23 @@ st.sidebar.header("Parameter Bounds")
 
 with st.sidebar.expander("Aerodynamics Bounds"):
     # Default bounds: ±10% of MVRC_2026 values (c_w_a=1.56, c_z_a_total=4.88)
-    c_w_a_min = st.number_input("Drag min [m²]", value=1.40, step=0.2)
-    c_w_a_max = st.number_input("Drag max [m²]", value=1.72, step=0.2)
+    c_w_a_min = st.number_input("Drag min [m²]", value=1.00, step=0.2)
+    c_w_a_max = st.number_input("Drag max [m²]", value=1.80, step=0.2)
     c_z_a_total_min = st.number_input("Total Downforce min [m²]", value=4.4, step=0.2)
     c_z_a_total_max = st.number_input("Total Downforce max [m²]", value=5.4, step=0.2)
 
 with st.sidebar.expander("Mass Bounds"):
     # Default bounds: ±10% of MVRC_2026 value (m=872)
-    mass_min = st.number_input("Mass min [kg]", value=720.0, step=5.0)
-    mass_max = st.number_input("Mass max [kg]", value=780.0, step=5.0)
+    mass_min = st.number_input("Mass min [kg]", value=820.0, step=5.0)
+    mass_max = st.number_input("Mass max [kg]", value=880.0, step=5.0)
 
 with st.sidebar.expander("Power Bounds"):
     # Default bounds: ±10% of MVRC_2026 value (pow_max=575e3)
     pow_max_min = (
-        st.number_input("Power min [kW]", value=517.0, step=10.0) * 1e3
+        st.number_input("Power min [kW]", value=520.0, step=10.0) * 1e3
     )  # Convert to W
     pow_max_max = (
-        st.number_input("Power max [kW]", value=633.0, step=10.0) * 1e3
+        st.number_input("Power max [kW]", value=600.0, step=10.0) * 1e3
     )  # Convert to W
 
 st.sidebar.divider()
@@ -932,7 +899,7 @@ if run_button:
         (mass_min, mass_max),
         (pow_max_min, pow_max_max),
     ]
-    base_config = VEHICLE_CONFIGS[vehicle_base]
+    base_config = load_vehicle_config(vehicle_base)
 
     # Initial guess (center of bounds)
     initial_guess = [
@@ -986,19 +953,25 @@ if run_button:
             log_container = st.container()
 
             try:
-                best_params, best_sectors, best_lap, best_v_max, best_error, best_sim_distance, best_sim_velocity = (
-                    run_grid_search(
-                        track,
-                        base_config,
-                        target_sectors,
-                        target_v_max_ms,
-                        bounds,
-                        log_container,
-                        aero_step,
-                        mass_step,
-                        power_step,
-                        **trace_kwargs,
-                    )
+                (
+                    best_params,
+                    best_sectors,
+                    best_lap,
+                    best_v_max,
+                    best_error,
+                    best_sim_distance,
+                    best_sim_velocity,
+                ) = run_grid_search(
+                    track,
+                    base_config,
+                    target_sectors,
+                    target_v_max_ms,
+                    bounds,
+                    log_container,
+                    aero_step,
+                    mass_step,
+                    power_step,
+                    **trace_kwargs,
                 )
 
                 if best_params is None:
@@ -1037,17 +1010,23 @@ if run_button:
             log_container = st.container()
 
             try:
-                best_params, best_sectors, best_lap, best_v_max, best_error, best_sim_distance, best_sim_velocity = (
-                    run_nelder_mead(
-                        track,
-                        base_config,
-                        target_sectors,
-                        target_v_max_ms,
-                        initial_guess,
-                        bounds,
-                        log_container,
-                        **trace_kwargs,
-                    )
+                (
+                    best_params,
+                    best_sectors,
+                    best_lap,
+                    best_v_max,
+                    best_error,
+                    best_sim_distance,
+                    best_sim_velocity,
+                ) = run_nelder_mead(
+                    track,
+                    base_config,
+                    target_sectors,
+                    target_v_max_ms,
+                    initial_guess,
+                    bounds,
+                    log_container,
+                    **trace_kwargs,
                 )
 
                 if best_params is None:
@@ -1088,17 +1067,23 @@ if run_button:
             log_container = st.container()
 
             try:
-                best_params, best_sectors, best_lap, best_v_max, best_error, best_sim_distance, best_sim_velocity = (
-                    run_trust_constr(
-                        track,
-                        base_config,
-                        target_sectors,
-                        target_v_max_ms,
-                        initial_guess,
-                        bounds,
-                        log_container,
-                        **trace_kwargs,
-                    )
+                (
+                    best_params,
+                    best_sectors,
+                    best_lap,
+                    best_v_max,
+                    best_error,
+                    best_sim_distance,
+                    best_sim_velocity,
+                ) = run_trust_constr(
+                    track,
+                    base_config,
+                    target_sectors,
+                    target_v_max_ms,
+                    initial_guess,
+                    bounds,
+                    log_container,
+                    **trace_kwargs,
                 )
 
                 if best_params is None:
@@ -1137,17 +1122,23 @@ if run_button:
             log_container = st.container()
 
             try:
-                best_params, best_sectors, best_lap, best_v_max, best_error, best_sim_distance, best_sim_velocity = (
-                    run_lbfgsb(
-                        track,
-                        base_config,
-                        target_sectors,
-                        target_v_max_ms,
-                        initial_guess,
-                        bounds,
-                        log_container,
-                        **trace_kwargs,
-                    )
+                (
+                    best_params,
+                    best_sectors,
+                    best_lap,
+                    best_v_max,
+                    best_error,
+                    best_sim_distance,
+                    best_sim_velocity,
+                ) = run_lbfgsb(
+                    track,
+                    base_config,
+                    target_sectors,
+                    target_v_max_ms,
+                    initial_guess,
+                    bounds,
+                    log_container,
+                    **trace_kwargs,
                 )
 
                 if best_params is None:
@@ -1193,6 +1184,51 @@ if run_button:
     c_z_a_f_opt = c_z_a_total_opt * (lr / wheelbase)
     c_z_a_r_opt = c_z_a_total_opt * (lf / wheelbase)
 
+    # Run a final full-resolution simulation with best parameters for detailed visualization
+    vehicle_pars = build_vehicle_pars(
+        base_config, c_w_a_opt, c_z_a_total_opt, mass_opt, pow_max_opt
+    )
+    final_track_opts = {
+        "trackname": track,
+        "flip_track": False,
+        "mu_weather": 1.0,
+        "interp_stepsize_des": 5.0,
+        "curv_filt_width": 10.0,
+        "use_drs1": True,
+        "use_drs2": True,
+        "use_pit": False,
+    }
+    final_solver_opts = {
+        "vehicle": None,
+        "series": base_config.get("series", "F1"),
+        "limit_braking_weak_side": "FA",
+        "v_start": 100.0 / 3.6,
+        "find_v_start": True,
+        "max_no_em_iters": 5,
+        "es_diff_max": 1.0,
+        "vel_tol": 1e-5,
+        "custom_vehicle_pars": vehicle_pars,
+    }
+    final_driver_opts = {
+        "vel_subtr_corner": 0.5,
+        "vel_lim_glob": None,
+        "yellow_s1": False,
+        "yellow_s2": False,
+        "yellow_s3": False,
+        "yellow_throttle": 0.3,
+        "initial_energy": 4.0e6,
+        "em_strategy": "FCFB",
+        "use_recuperation": True,
+        "use_lift_coast": False,
+        "lift_coast_dist": 10.0,
+    }
+    try:
+        final_sim_result = run_simulation_advanced(
+            final_track_opts, final_solver_opts, final_driver_opts
+        )
+    except Exception:
+        final_sim_result = None
+
     st.session_state.param_id_result = {
         "success": True,
         "c_w_a": c_w_a_opt,
@@ -1213,6 +1249,8 @@ if run_button:
         "sim_velocity": best_sim_velocity,
         "ref_distance": ref_distance,
         "ref_velocity": ref_velocity,
+        "sim_result": final_sim_result,
+        "fastf1_trace": st.session_state.fastf1_trace if use_trace_mode else None,
     }
 
 # Display results
@@ -1295,7 +1333,11 @@ if st.session_state.param_id_result is not None:
         st.markdown(f"**Difference:** :{color}[{v_diff:+.1f} km/h]")
 
     # Speed trace overlay plot (when trace data is available)
-    if res.get("use_trace") and res.get("sim_distance") is not None and res.get("ref_distance") is not None:
+    if (
+        res.get("use_trace")
+        and res.get("sim_distance") is not None
+        and res.get("ref_distance") is not None
+    ):
         st.divider()
         st.header("Speed Trace Comparison")
 
@@ -1312,17 +1354,36 @@ if st.session_state.param_id_result is not None:
         sim_vel_interp = np.interp(ref_dist_norm, sim_dist_norm, sim_vel)
         delta_vel = sim_vel_interp - r_vel
 
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), height_ratios=[3, 1], sharex=True)
+        fig, (ax1, ax2) = plt.subplots(
+            2, 1, figsize=(12, 6), height_ratios=[3, 1], sharex=True
+        )
 
-        ax1.plot(ref_dist_norm * r_dist[-1] / 1000, r_vel * 3.6, label="FastF1 Reference", color="tab:blue", alpha=0.8)
-        ax1.plot(sim_dist / 1000, sim_vel * 3.6, label="Simulation (Best Fit)", color="tab:red", alpha=0.8)
+        ax1.plot(
+            ref_dist_norm * r_dist[-1] / 1000,
+            r_vel * 3.6,
+            label="FastF1 Reference",
+            color="tab:blue",
+            alpha=0.8,
+        )
+        ax1.plot(
+            sim_dist / 1000,
+            sim_vel * 3.6,
+            label="Simulation (Best Fit)",
+            color="tab:red",
+            alpha=0.8,
+        )
         ax1.set_ylabel("Speed [km/h]")
         ax1.legend(loc="upper right")
         ax1.grid(True, alpha=0.3)
         rmse = compute_trace_error(sim_dist, sim_vel, r_dist, r_vel)
         ax1.set_title(f"Speed Trace Overlay (RMSE: {rmse:.2f} m/s)")
 
-        ax2.plot(ref_dist_norm * r_dist[-1] / 1000, delta_vel * 3.6, color="tab:green", alpha=0.8)
+        ax2.plot(
+            ref_dist_norm * r_dist[-1] / 1000,
+            delta_vel * 3.6,
+            color="tab:green",
+            alpha=0.8,
+        )
         ax2.axhline(y=0, color="gray", linestyle="--", alpha=0.5)
         ax2.set_xlabel("Distance [km]")
         ax2.set_ylabel("Delta [km/h]")
@@ -1332,22 +1393,253 @@ if st.session_state.param_id_result is not None:
         st.pyplot(fig)
         plt.close(fig)
 
+        # Additional telemetry comparison plots
+        ff1_trace = res.get("fastf1_trace")
+        sim_result = res.get("sim_result")
+
+        if ff1_trace is not None:
+            # Shared normalized distance grids
+            ref_dist_km = ref_dist_norm * r_dist[-1] / 1000
+            sim_dist_km = sim_dist / 1000 if sim_result is not None else None
+            sim_dist_full_km = (
+                sim_result.distance / 1000 if sim_result is not None else None
+            )
+
+            # --- Gear comparison ---
+            if ff1_trace.get("gear") is not None:
+                st.subheader("Gear Comparison")
+                fig_gear, ax_gear = plt.subplots(figsize=(12, 3))
+                ax_gear.plot(
+                    ref_dist_km,
+                    ff1_trace["gear"][: len(ref_dist_km)]
+                    if len(ff1_trace["gear"]) >= len(ref_dist_km)
+                    else ff1_trace["gear"],
+                    label="FastF1",
+                    color="tab:blue",
+                    alpha=0.8,
+                    drawstyle="steps-post",
+                )
+                if sim_result is not None:
+                    ax_gear.plot(
+                        sim_dist_full_km,
+                        sim_result.gear,
+                        label="Simulation",
+                        color="tab:red",
+                        alpha=0.8,
+                        drawstyle="steps-post",
+                    )
+                ax_gear.set_xlabel("Distance [km]")
+                ax_gear.set_ylabel("Gear")
+                ax_gear.legend(loc="upper right")
+                ax_gear.grid(True, alpha=0.3)
+                plt.tight_layout()
+                st.pyplot(fig_gear)
+                plt.close(fig_gear)
+
+            # --- RPM comparison ---
+            if ff1_trace.get("rpm") is not None:
+                st.subheader("RPM Comparison")
+                fig_rpm, ax_rpm = plt.subplots(figsize=(12, 3))
+                ax_rpm.plot(
+                    ref_dist_km,
+                    ff1_trace["rpm"][: len(ref_dist_km)]
+                    if len(ff1_trace["rpm"]) >= len(ref_dist_km)
+                    else ff1_trace["rpm"],
+                    label="FastF1",
+                    color="tab:blue",
+                    alpha=0.8,
+                )
+                if sim_result is not None and sim_result.rpm is not None:
+                    ax_rpm.plot(
+                        sim_dist_full_km,
+                        sim_result.rpm,
+                        label="Simulation",
+                        color="tab:red",
+                        alpha=0.8,
+                    )
+                ax_rpm.set_xlabel("Distance [km]")
+                ax_rpm.set_ylabel("RPM")
+                ax_rpm.legend(loc="upper right")
+                ax_rpm.grid(True, alpha=0.3)
+                plt.tight_layout()
+                st.pyplot(fig_rpm)
+                plt.close(fig_rpm)
+
+            # --- DRS comparison ---
+            if ff1_trace.get("drs_active") is not None:
+                st.subheader("DRS Comparison")
+                fig_drs, ax_drs = plt.subplots(figsize=(12, 2))
+                ax_drs.fill_between(
+                    ref_dist_km,
+                    ff1_trace["drs_active"][: len(ref_dist_km)]
+                    if len(ff1_trace["drs_active"]) >= len(ref_dist_km)
+                    else ff1_trace["drs_active"],
+                    step="post",
+                    alpha=0.3,
+                    color="tab:blue",
+                    label="FastF1",
+                )
+                if sim_result is not None and sim_result.drs is not None:
+                    ax_drs.fill_between(
+                        sim_dist_full_km,
+                        sim_result.drs.astype(float),
+                        step="post",
+                        alpha=0.3,
+                        color="tab:red",
+                        label="Simulation",
+                    )
+                ax_drs.set_xlabel("Distance [km]")
+                ax_drs.set_ylabel("DRS")
+                ax_drs.set_yticks([0, 1])
+                ax_drs.set_yticklabels(["Closed", "Open"])
+                ax_drs.legend(loc="upper right")
+                ax_drs.grid(True, alpha=0.3)
+                plt.tight_layout()
+                st.pyplot(fig_drs)
+                plt.close(fig_drs)
+
+            # --- Throttle (FastF1) with sim longitudinal acceleration as proxy ---
+            if ff1_trace.get("throttle") is not None:
+                st.subheader("Throttle & Longitudinal Acceleration")
+                fig_thr, ax_thr = plt.subplots(figsize=(12, 3))
+                ax_thr.plot(
+                    ref_dist_km,
+                    ff1_trace["throttle"][: len(ref_dist_km)]
+                    if len(ff1_trace["throttle"]) >= len(ref_dist_km)
+                    else ff1_trace["throttle"],
+                    label="FastF1 Throttle [%]",
+                    color="tab:blue",
+                    alpha=0.8,
+                )
+                ax_thr.set_xlabel("Distance [km]")
+                ax_thr.set_ylabel("Throttle [%]", color="tab:blue")
+                ax_thr.tick_params(axis="y", labelcolor="tab:blue")
+                ax_thr.grid(True, alpha=0.3)
+
+                if sim_result is not None:
+                    ax_acc = ax_thr.twinx()
+                    ax_acc.plot(
+                        sim_dist_full_km,
+                        sim_result.acceleration,
+                        label="Sim Longitudinal Accel [m/s²]",
+                        color="tab:red",
+                        alpha=0.6,
+                    )
+                    ax_acc.set_ylabel("Acceleration [m/s²]", color="tab:red")
+                    ax_acc.tick_params(axis="y", labelcolor="tab:red")
+
+                # Combined legend
+                lines1, labels1 = ax_thr.get_legend_handles_labels()
+                if sim_result is not None:
+                    lines2, labels2 = ax_acc.get_legend_handles_labels()
+                    ax_thr.legend(lines1 + lines2, labels1 + labels2, loc="upper right")
+                else:
+                    ax_thr.legend(loc="upper right")
+                plt.tight_layout()
+                st.pyplot(fig_thr)
+                plt.close(fig_thr)
+
+            # --- Brake (FastF1) with sim negative acceleration as proxy ---
+            if ff1_trace.get("brake") is not None:
+                st.subheader("Brake & Deceleration")
+                fig_brk, ax_brk = plt.subplots(figsize=(12, 3))
+                brake_data = ff1_trace["brake"]
+                # Brake can be boolean (0/1) or percentage (0-100)
+                brake_vals = (
+                    brake_data[: len(ref_dist_km)]
+                    if len(brake_data) >= len(ref_dist_km)
+                    else brake_data
+                )
+                ax_brk.fill_between(
+                    ref_dist_km,
+                    brake_vals,
+                    step="post",
+                    alpha=0.4,
+                    color="tab:blue",
+                    label="FastF1 Brake",
+                )
+                ax_brk.set_xlabel("Distance [km]")
+                ax_brk.set_ylabel("Brake", color="tab:blue")
+                ax_brk.tick_params(axis="y", labelcolor="tab:blue")
+                ax_brk.grid(True, alpha=0.3)
+
+                if sim_result is not None:
+                    ax_dec = ax_brk.twinx()
+                    # Show negative acceleration (braking) as positive values
+                    decel = np.clip(-sim_result.acceleration, 0, None)
+                    ax_dec.plot(
+                        sim_dist_full_km,
+                        decel,
+                        label="Sim Deceleration [m/s²]",
+                        color="tab:red",
+                        alpha=0.6,
+                    )
+                    ax_dec.set_ylabel("Deceleration [m/s²]", color="tab:red")
+                    ax_dec.tick_params(axis="y", labelcolor="tab:red")
+
+                lines1, labels1 = ax_brk.get_legend_handles_labels()
+                if sim_result is not None:
+                    lines2, labels2 = ax_dec.get_legend_handles_labels()
+                    ax_brk.legend(lines1 + lines2, labels1 + labels2, loc="upper right")
+                else:
+                    ax_brk.legend(loc="upper right")
+                plt.tight_layout()
+                st.pyplot(fig_brk)
+                plt.close(fig_brk)
+
+    # Full simulation data visualization
+    if res.get("sim_result") is not None:
+        st.divider()
+        st.header("Simulation Data")
+        render_simulation_plots(res["sim_result"], key_prefix="paramid_")
+
     st.divider()
     st.caption(f"Track: {res['track']} | Base vehicle: {res['vehicle']}")
 
 else:
-    # Show preview of downloaded speed trace if available
+    # Show preview of downloaded telemetry if available
     if st.session_state.fastf1_trace is not None:
         trace = st.session_state.fastf1_trace
-        st.subheader("Downloaded Speed Trace Preview")
-
-        fig, ax = plt.subplots(figsize=(12, 4))
-        ax.plot(trace["distance"] / 1000, trace["velocity"] * 3.6, color="tab:blue")
-        ax.set_xlabel("Distance [km]")
-        ax.set_ylabel("Speed [km/h]")
         driver_str = trace["driver"] if trace["driver"] else "Fastest"
-        ax.set_title(f"{trace['year']} {trace['gp']} ({trace['session']}) - {driver_str}")
-        ax.grid(True, alpha=0.3)
+        title_str = f"{trace['year']} {trace['gp']} ({trace['session']}) - {driver_str}"
+        st.subheader(f"Downloaded Telemetry Preview")
+
+        dist_km = trace["distance"] / 1000
+
+        # Count available channels for subplot layout
+        channels = []
+        channels.append(("Speed [km/h]", trace["velocity"] * 3.6, "tab:blue", "line"))
+        if trace.get("gear") is not None:
+            channels.append(("Gear", trace["gear"], "tab:orange", "step"))
+        if trace.get("rpm") is not None:
+            channels.append(("RPM", trace["rpm"], "tab:green", "line"))
+        if trace.get("throttle") is not None:
+            channels.append(("Throttle [%]", trace["throttle"], "tab:blue", "line"))
+        if trace.get("brake") is not None:
+            channels.append(("Brake", trace["brake"], "tab:red", "fill"))
+        if trace.get("drs_active") is not None:
+            channels.append(("DRS", trace["drs_active"], "tab:purple", "fill"))
+
+        n_panels = len(channels)
+        fig, axes = plt.subplots(n_panels, 1, figsize=(12, 2.5 * n_panels), sharex=True)
+        if n_panels == 1:
+            axes = [axes]
+
+        fig.suptitle(title_str, fontsize=12)
+
+        for ax, (label, data, color, style) in zip(axes, channels):
+            d = dist_km[: len(data)] if len(data) <= len(dist_km) else dist_km
+            v = data[: len(d)] if len(data) >= len(d) else data
+            if style == "step":
+                ax.plot(d, v, color=color, drawstyle="steps-post")
+            elif style == "fill":
+                ax.fill_between(d, v, step="post", alpha=0.5, color=color)
+            else:
+                ax.plot(d, v, color=color)
+            ax.set_ylabel(label)
+            ax.grid(True, alpha=0.3)
+
+        axes[-1].set_xlabel("Distance [km]")
         plt.tight_layout()
         st.pyplot(fig)
         plt.close(fig)

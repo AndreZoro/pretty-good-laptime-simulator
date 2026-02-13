@@ -72,9 +72,9 @@ def load_speed_trace(
     gp: str,
     session_type: str = "Q",
     driver: str | None = None,
-) -> tuple[np.ndarray, np.ndarray, float, list[float]]:
+) -> dict:
     """
-    Download and extract a speed trace from FastF1.
+    Download and extract telemetry channels from FastF1.
 
     Args:
         year: Season year (e.g. 2023)
@@ -83,11 +83,17 @@ def load_speed_trace(
         driver: Driver abbreviation (e.g. "VER"). None = fastest lap overall.
 
     Returns:
-        Tuple of (distance_m, speed_mps, lap_time_s, sector_times)
-        - distance_m: ndarray of cumulative distance in meters
-        - speed_mps: ndarray of speed in m/s
-        - lap_time_s: lap time in seconds
+        Dict with keys:
+        - distance: ndarray of cumulative distance in meters
+        - speed: ndarray of speed in m/s
+        - lap_time: lap time in seconds
         - sector_times: [S1, S2, S3] in seconds
+        - throttle: ndarray 0-100 or None
+        - brake: ndarray 0-100 (or bool) or None
+        - gear: ndarray of gear numbers or None
+        - rpm: ndarray of engine RPM or None
+        - drs: ndarray of raw DRS status codes or None
+        - drs_active: ndarray of binary DRS active flag or None
     """
     import fastf1
 
@@ -118,7 +124,35 @@ def load_speed_trace(
     s3 = lap["Sector3Time"].total_seconds()
     sector_times = [s1, s2, s3]
 
-    return distance_m, speed_mps, lap_time_s, sector_times
+    # Extract additional channels (gracefully handle missing columns)
+    def _get_channel(name):
+        if name in car_data.columns:
+            return car_data[name].to_numpy().astype(float)
+        return None
+
+    throttle = _get_channel("Throttle")
+    brake = _get_channel("Brake")
+    gear = _get_channel("nGear")
+    rpm = _get_channel("RPM")
+    drs_raw = _get_channel("DRS")
+
+    # Derive binary DRS active flag (codes 10, 12, 14 = open/active)
+    drs_active = None
+    if drs_raw is not None:
+        drs_active = np.isin(drs_raw.astype(int), [10, 12, 14]).astype(float)
+
+    return {
+        "distance": distance_m,
+        "speed": speed_mps,
+        "lap_time": lap_time_s,
+        "sector_times": sector_times,
+        "throttle": throttle,
+        "brake": brake,
+        "gear": gear,
+        "rpm": rpm,
+        "drs": drs_raw,
+        "drs_active": drs_active,
+    }
 
 
 def get_drivers_in_session(year: int, gp: str, session_type: str = "Q") -> list[str]:

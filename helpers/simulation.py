@@ -84,6 +84,18 @@ class SimulationResult:
     series: str
     weather: str
 
+    # Extended data (optional for backward compatibility)
+    rpm: Optional[np.ndarray] = None  # Engine RPM [1/min]
+    engine_torque: Optional[np.ndarray] = None  # Engine torque [Nm]
+    e_motor_torque: Optional[np.ndarray] = None  # E-motor torque [Nm]
+    tire_loads: Optional[np.ndarray] = None  # Tire loads (no_points, 4) [FL, FR, RL, RR] [N]
+    energy_storage: Optional[np.ndarray] = None  # Battery/ERS state [kJ]
+    fuel_consumed_profile: Optional[np.ndarray] = None  # Cumulative fuel [kg]
+    energy_consumed_profile: Optional[np.ndarray] = None  # Cumulative energy [kJ]
+    drs: Optional[np.ndarray] = None  # DRS active flag
+    time: Optional[np.ndarray] = None  # Cumulative time [s]
+    friction: Optional[np.ndarray] = None  # Track friction coefficient
+
     def format_lap_time(self) -> str:
         """Format lap time as M:SS.mmm"""
         minutes = int(self.lap_time // 60)
@@ -261,6 +273,16 @@ def run_simulation(
         track_name=track_name,
         series=series,
         weather=weather,
+        rpm=lap.n_cl[:no_points] * 60,
+        engine_torque=lap.m_eng[:no_points],
+        e_motor_torque=lap.m_e_motor[:no_points],
+        tire_loads=lap.tire_loads[:no_points],
+        energy_storage=lap.es_cl[:no_points] / 1000.0,
+        fuel_consumed_profile=lap.fuel_cons_cl[:no_points],
+        energy_consumed_profile=lap.e_cons_cl[:no_points] / 1000.0,
+        drs=lap.trackobj.drs[:no_points],
+        time=lap.t_cl[:no_points],
+        friction=lap.trackobj.mu[:no_points],
     )
 
 
@@ -351,4 +373,14 @@ def run_simulation_advanced(
         track_name=track_opts["trackname"],
         series=solver_opts["series"],
         weather=weather,
+        rpm=lap.n_cl[:no_points] * 60,
+        engine_torque=lap.m_eng[:no_points],
+        e_motor_torque=lap.m_e_motor[:no_points],
+        tire_loads=lap.tire_loads[:no_points],
+        energy_storage=lap.es_cl[:no_points] / 1000.0,
+        fuel_consumed_profile=lap.fuel_cons_cl[:no_points],
+        energy_consumed_profile=lap.e_cons_cl[:no_points] / 1000.0,
+        drs=lap.trackobj.drs[:no_points],
+        time=lap.t_cl[:no_points],
+        friction=lap.trackobj.mu[:no_points],
     )
