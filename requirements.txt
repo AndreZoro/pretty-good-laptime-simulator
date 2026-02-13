@@ -5,6 +5,7 @@ scipy>=1.10
 quadprog>=0.1.11
 utm>=0.7
 numba>=0.60
+fastf1
 
 # Web UI dependencies
 streamlit>=1.28

@@ -139,3 +139,7 @@ docker/*
 !docker/run_docker.sh
 **/databases/*.sqlite
 **/saved_models/*
+
+
+#FastF1 cached data
+laptimesim/input/fastf1_cache/*
