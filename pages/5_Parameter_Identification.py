@@ -7,10 +7,19 @@ Uses 4 targets (S1, S2, S3, v_max) to identify 4 parameters (drag, downforce, ma
 
 import time
 
+import matplotlib.pyplot as plt
 import numpy as np
 import streamlit as st
 from scipy.optimize import Bounds, minimize
 
+from helpers.fastf1_data import (
+    TRACK_NAME_MAP,
+    compute_trace_error,
+    get_available_gps,
+    get_available_years,
+    get_drivers_in_session,
+    load_speed_trace,
+)
 from helpers.simulation import (
     get_available_tracks,
     get_available_vehicles,
@@ -24,13 +33,15 @@ st.set_page_config(
 )
 
 st.title("🔍 Parameter Identification")
-st.caption("Determine vehicle parameters from sector times and max velocity")
+st.caption("Determine vehicle parameters from sector times, max velocity, or speed traces")
 
 # Initialize session state
 if "param_id_result" not in st.session_state:
     st.session_state.param_id_result = None
 if "param_id_abort" not in st.session_state:
     st.session_state.param_id_abort = False
+if "fastf1_trace" not in st.session_state:
+    st.session_state.fastf1_trace = None
 
 
 class AbortException(Exception):
@@ -238,7 +249,7 @@ def run_sim_with_params(
         "series": base_config.get("series", "F1"),
         "limit_braking_weak_side": None,  # Skip weak side calculation
         "v_start": 100.0 / 3.6,
-        "find_v_start": False,  # Skip velocity search
+        "find_v_start": True,  # Re-run with end-of-lap velocity as start
         "max_no_em_iters": 1,  # Single iteration
         "es_diff_max": 100.0,
         "vel_tol": 5e-2,  # Lower tolerance for faster parameter search
@@ -262,9 +273,9 @@ def run_sim_with_params(
     try:
         result = run_simulation_advanced(track_opts, solver_opts, driver_opts)
         v_max = float(np.max(result.velocity))  # Max velocity in m/s
-        return result.sector_times, result.lap_time, v_max
+        return result.sector_times, result.lap_time, v_max, result.distance, result.velocity
     except Exception:
-        return None, None, None
+        return None, None, None, None, None
 
 
 def run_grid_search(
@@ -277,12 +288,16 @@ def run_grid_search(
     aero_step=0.2,
     mass_step=5.0,
     power_step=10e3,
+    ref_distance=None,
+    ref_velocity=None,
 ):
     """
     Run a coarse grid search to find approximate best parameters.
     Uses fixed step sizes for each parameter.
     Returns best result found, even if aborted.
     """
+    use_trace = ref_distance is not None and ref_velocity is not None
+
     c_w_a_vals = np.arange(bounds[0][0], bounds[0][1] + aero_step / 2, aero_step)
     c_z_a_vals = np.arange(bounds[1][0], bounds[1][1] + aero_step / 2, aero_step)
     mass_vals = np.arange(bounds[2][0], bounds[2][1] + mass_step / 2, mass_step)
@@ -293,6 +308,8 @@ def run_grid_search(
     best_sectors = None
     best_lap = None
     best_v_max = None
+    best_sim_distance = None
+    best_sim_velocity = None
 
     total = len(c_w_a_vals) * len(c_z_a_vals) * len(mass_vals) * len(pow_max_vals)
     count = 0
@@ -312,7 +329,7 @@ def run_grid_search(
                         count += 1
                         start = time.time()
 
-                        sectors, lap_time, v_max = run_sim_with_params(
+                        sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
                             track, base_config, c_w_a, c_z_a, mass, pow_max
                         )
                         elapsed = time.time() - start
@@ -323,16 +340,20 @@ def run_grid_search(
                             )
                             continue
 
-                        sector_error = sum(
-                            (s - t) ** 2 for s, t in zip(sectors, target_sectors)
-                        )
-                        v_max_error = v_max_weight * (v_max - target_v_max) ** 2
-                        error = sector_error + v_max_error
+                        if use_trace:
+                            error = compute_trace_error(sim_dist, sim_vel, ref_distance, ref_velocity)
+                        else:
+                            sector_error = sum(
+                                (s - t) ** 2 for s, t in zip(sectors, target_sectors)
+                            )
+                            v_max_error = v_max_weight * (v_max - target_v_max) ** 2
+                            error = sector_error + v_max_error
 
+                        err_label = f"RMSE={error:.2f}m/s" if use_trace else f"err={error:.2f}"
                         status = "**BEST**" if error < best_error else ""
                         log_container.write(
                             f"[{count}/{total}] drag={c_w_a:.2f}, df={c_z_a:.2f}, m={mass:.0f}, P={pow_max / 1e3:.0f}kW → "
-                            f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, err={error:.2f} ({elapsed:.2f}s) {status}"
+                            f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, {err_label} ({elapsed:.2f}s) {status}"
                         )
 
                         if error < best_error:
@@ -341,6 +362,8 @@ def run_grid_search(
                             best_sectors = sectors
                             best_lap = lap_time
                             best_v_max = v_max
+                            best_sim_distance = sim_dist
+                            best_sim_velocity = sim_vel
     except AbortException:
         # Log best result found before abort
         if best_params is not None:
@@ -349,7 +372,7 @@ def run_grid_search(
             )
         raise
 
-    return best_params, best_sectors, best_lap, best_v_max, best_error
+    return best_params, best_sectors, best_lap, best_v_max, best_error, best_sim_distance, best_sim_velocity
 
 
 def run_nelder_mead(
@@ -360,12 +383,16 @@ def run_nelder_mead(
     initial_guess,
     bounds,
     log_container,
+    ref_distance=None,
+    ref_velocity=None,
 ):
     """
     Run Nelder-Mead optimization starting from an initial guess.
     Faster than grid search but may find local minimum.
     Parameters are clipped to bounds.
     """
+    use_trace = ref_distance is not None and ref_velocity is not None
+
     eval_count = [0]
     best_result = [
         None,
@@ -373,7 +400,9 @@ def run_nelder_mead(
         None,
         None,
         float("inf"),
-    ]  # [params, sectors, lap_time, v_max, error]
+        None,
+        None,
+    ]  # [params, sectors, lap_time, v_max, error, sim_dist, sim_vel]
 
     # Extract bounds for clipping
     c_w_a_bounds = bounds[0]
@@ -397,7 +426,7 @@ def run_nelder_mead(
         pow_max = np.clip(params[3], pow_max_bounds[0], pow_max_bounds[1])
 
         start = time.time()
-        sectors, lap_time, v_max = run_sim_with_params(
+        sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
             track, base_config, c_w_a, c_z_a_total, mass, pow_max
         )
         elapsed = time.time() - start
@@ -408,12 +437,17 @@ def run_nelder_mead(
             )
             return 1e6
 
-        sector_error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
-        v_max_error = v_max_weight * (v_max - target_v_max) ** 2
-        error = sector_error + v_max_error
+        if use_trace:
+            error = compute_trace_error(sim_dist, sim_vel, ref_distance, ref_velocity)
+        else:
+            sector_error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
+            v_max_error = v_max_weight * (v_max - target_v_max) ** 2
+            error = sector_error + v_max_error
+
+        err_label = f"RMSE={error:.2f}m/s" if use_trace else f"err={error:.2f}"
         log_container.write(
             f"[{eval_count[0]}] drag={c_w_a:.2f}, df={c_z_a_total:.2f}, m={mass:.0f}, P={pow_max / 1e3:.0f}kW → "
-            f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, err={error:.2f} ({elapsed:.1f}s)"
+            f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, {err_label} ({elapsed:.1f}s)"
         )
 
         # Track best result for abort case (store clipped values)
@@ -423,6 +457,8 @@ def run_nelder_mead(
             best_result[2] = lap_time
             best_result[3] = v_max
             best_result[4] = error
+            best_result[5] = sim_dist
+            best_result[6] = sim_vel
 
         return error
 
@@ -444,13 +480,12 @@ def run_nelder_mead(
         mass = np.clip(result.x[2], mass_bounds[0], mass_bounds[1])
         pow_max = np.clip(result.x[3], pow_max_bounds[0], pow_max_bounds[1])
 
-        sectors, lap_time, v_max = run_sim_with_params(
+        sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
             track, base_config, c_w_a, c_z_a_total, mass, pow_max
         )
 
-        return [c_w_a, c_z_a_total, mass, pow_max], sectors, lap_time, v_max, result.fun
+        return [c_w_a, c_z_a_total, mass, pow_max], sectors, lap_time, v_max, result.fun, sim_dist, sim_vel
     except AbortException:
-        # Return best result found so far
         raise
 
 
@@ -462,12 +497,16 @@ def run_trust_constr(
     initial_guess,
     bounds,
     log_container,
+    ref_distance=None,
+    ref_velocity=None,
 ):
     """
     Run Trust-Region Constrained optimization starting from an initial guess.
     Supports bounds natively for better convergence.
     Uses normalized parameters (0-1) internally for better scaling.
     """
+    use_trace = ref_distance is not None and ref_velocity is not None
+
     eval_count = [0]
     best_result = [
         None,
@@ -475,7 +514,9 @@ def run_trust_constr(
         None,
         None,
         float("inf"),
-    ]  # [params, sectors, lap_time, v_max, error]
+        None,
+        None,
+    ]  # [params, sectors, lap_time, v_max, error, sim_dist, sim_vel]
 
     # Extract bounds for scaling
     lower = np.array([bounds[0][0], bounds[1][0], bounds[2][0], bounds[3][0]])
@@ -510,7 +551,7 @@ def run_trust_constr(
         c_w_a, c_z_a_total, mass, pow_max = real_params
 
         start = time.time()
-        sectors, lap_time, v_max = run_sim_with_params(
+        sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
             track, base_config, c_w_a, c_z_a_total, mass, pow_max
         )
         elapsed = time.time() - start
@@ -521,12 +562,17 @@ def run_trust_constr(
             )
             return 1e6
 
-        sector_error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
-        v_max_error = v_max_weight * (v_max - target_v_max) ** 2
-        error = sector_error + v_max_error
+        if use_trace:
+            error = compute_trace_error(sim_dist, sim_vel, ref_distance, ref_velocity)
+        else:
+            sector_error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
+            v_max_error = v_max_weight * (v_max - target_v_max) ** 2
+            error = sector_error + v_max_error
+
+        err_label = f"RMSE={error:.2f}m/s" if use_trace else f"err={error:.2f}"
         log_container.write(
             f"[{eval_count[0]}] drag={c_w_a:.2f}, df={c_z_a_total:.2f}, m={mass:.0f}, P={pow_max / 1e3:.0f}kW → "
-            f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, err={error:.2f} ({elapsed:.1f}s)"
+            f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, {err_label} ({elapsed:.1f}s)"
         )
 
         # Track best result for abort case (store real values)
@@ -536,6 +582,8 @@ def run_trust_constr(
             best_result[2] = lap_time
             best_result[3] = v_max
             best_result[4] = error
+            best_result[5] = sim_dist
+            best_result[6] = sim_vel
 
         return error
 
@@ -555,13 +603,12 @@ def run_trust_constr(
         # Convert final result back to real parameters
         real_params = to_real(result.x)
         c_w_a, c_z_a_total, mass, pow_max = real_params
-        sectors, lap_time, v_max = run_sim_with_params(
+        sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
             track, base_config, c_w_a, c_z_a_total, mass, pow_max
         )
 
-        return list(real_params), sectors, lap_time, v_max, result.fun
+        return list(real_params), sectors, lap_time, v_max, result.fun, sim_dist, sim_vel
     except AbortException:
-        # Return best result found so far
         raise
 
 
@@ -573,12 +620,16 @@ def run_lbfgsb(
     initial_guess,
     bounds,
     log_container,
+    ref_distance=None,
+    ref_velocity=None,
 ):
     """
     Run L-BFGS-B optimization starting from an initial guess.
     Fast gradient-based optimizer with bounds support.
     Uses normalized parameters (0-1) internally for better scaling.
     """
+    use_trace = ref_distance is not None and ref_velocity is not None
+
     eval_count = [0]
     best_result = [
         None,
@@ -586,7 +637,9 @@ def run_lbfgsb(
         None,
         None,
         float("inf"),
-    ]  # [params, sectors, lap_time, v_max, error]
+        None,
+        None,
+    ]  # [params, sectors, lap_time, v_max, error, sim_dist, sim_vel]
 
     # Extract bounds for scaling
     lower = np.array([bounds[0][0], bounds[1][0], bounds[2][0], bounds[3][0]])
@@ -621,7 +674,7 @@ def run_lbfgsb(
         c_w_a, c_z_a_total, mass, pow_max = real_params
 
         start = time.time()
-        sectors, lap_time, v_max = run_sim_with_params(
+        sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
             track, base_config, c_w_a, c_z_a_total, mass, pow_max
         )
         elapsed = time.time() - start
@@ -632,12 +685,17 @@ def run_lbfgsb(
             )
             return 1e6
 
-        sector_error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
-        v_max_error = v_max_weight * (v_max - target_v_max) ** 2
-        error = sector_error + v_max_error
+        if use_trace:
+            error = compute_trace_error(sim_dist, sim_vel, ref_distance, ref_velocity)
+        else:
+            sector_error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
+            v_max_error = v_max_weight * (v_max - target_v_max) ** 2
+            error = sector_error + v_max_error
+
+        err_label = f"RMSE={error:.2f}m/s" if use_trace else f"err={error:.2f}"
         log_container.write(
             f"[{eval_count[0]}] drag={c_w_a:.2f}, df={c_z_a_total:.2f}, m={mass:.0f}, P={pow_max / 1e3:.0f}kW → "
-            f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, err={error:.2f} ({elapsed:.1f}s)"
+            f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, {err_label} ({elapsed:.1f}s)"
         )
 
         # Track best result for abort case (store real values)
@@ -647,6 +705,8 @@ def run_lbfgsb(
             best_result[2] = lap_time
             best_result[3] = v_max
             best_result[4] = error
+            best_result[5] = sim_dist
+            best_result[6] = sim_vel
 
         return error
 
@@ -666,13 +726,12 @@ def run_lbfgsb(
         # Convert final result back to real parameters
         real_params = to_real(result.x)
         c_w_a, c_z_a_total, mass, pow_max = real_params
-        sectors, lap_time, v_max = run_sim_with_params(
+        sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
             track, base_config, c_w_a, c_z_a_total, mass, pow_max
         )
 
-        return list(real_params), sectors, lap_time, v_max, result.fun
+        return list(real_params), sectors, lap_time, v_max, result.fun, sim_dist, sim_vel
     except AbortException:
-        # Return best result found so far
         raise
 
 
@@ -693,35 +752,127 @@ vehicle_base = st.sidebar.selectbox(
     options=list(VEHICLE_CONFIGS.keys()),
 )
 
-st.sidebar.header("Target Sector Times")
-
-col1, col2, col3 = st.sidebar.columns(3)
-with col1:
-    target_s1 = st.number_input(
-        "S1 [s]", min_value=10.0, max_value=120.0, value=24.0, step=0.1, format="%.3f"
-    )
-with col2:
-    target_s2 = st.number_input(
-        "S2 [s]", min_value=10.0, max_value=120.0, value=26.5, step=0.1, format="%.3f"
-    )
-with col3:
-    target_s3 = st.number_input(
-        "S3 [s]", min_value=10.0, max_value=120.0, value=40.4, step=0.1, format="%.3f"
-    )
-
-target_total = target_s1 + target_s2 + target_s3
-st.sidebar.caption(f"Total: **{int(target_total // 60)}:{target_total % 60:06.3f}**")
-
-st.sidebar.header("Target Max Velocity")
-target_v_max = st.sidebar.number_input(
-    "V_max [km/h]",
-    min_value=200.0,
-    max_value=400.0,
-    value=320.0,
-    step=1.0,
-    help="Speed trap / maximum velocity target. Adding this 4th constraint makes the system well-determined (4 params, 4 targets).",
+# Target source toggle
+st.sidebar.header("Target Source")
+target_source = st.sidebar.radio(
+    "Source",
+    options=["Manual", "FastF1 Telemetry"],
+    horizontal=True,
+    help="Manual: enter sector times + v_max. FastF1: download real telemetry speed traces.",
 )
-target_v_max_ms = target_v_max / 3.6  # Convert to m/s
+
+use_trace_mode = False
+ref_distance = None
+ref_velocity = None
+
+if target_source == "FastF1 Telemetry":
+    available_gps = get_available_gps(available_tracks)
+    # Filter to tracks that have FastF1 mapping
+    fastf1_tracks = list(available_gps.keys())
+
+    if not fastf1_tracks:
+        st.sidebar.warning("No tracks with FastF1 mapping available.")
+    else:
+        ff1_track = st.sidebar.selectbox(
+            "GP Track",
+            options=fastf1_tracks,
+            index=fastf1_tracks.index(track) if track in fastf1_tracks else 0,
+            help="Select track (must match sim track for meaningful comparison)",
+        )
+        # Sync track selection with FastF1 track
+        track = ff1_track
+
+        ff1_year = st.sidebar.selectbox("Year", options=get_available_years(), index=5)
+        ff1_session = st.sidebar.radio(
+            "Session", options=["Q", "R"], horizontal=True,
+            help="Q = Qualifying, R = Race",
+        )
+        ff1_driver = st.sidebar.text_input(
+            "Driver (optional)",
+            value="",
+            help="3-letter abbreviation (e.g. VER, HAM). Leave empty for fastest lap.",
+        )
+        ff1_driver = ff1_driver.strip().upper() or None
+
+        download_button = st.sidebar.button("Download Telemetry", type="secondary", use_container_width=True)
+
+        if download_button:
+            gp_name = available_gps[ff1_track]
+            with st.spinner(f"Downloading {ff1_year} {gp_name} {ff1_session} telemetry..."):
+                try:
+                    dist, vel, lap_time_ff1, sectors_ff1 = load_speed_trace(
+                        ff1_year, gp_name, ff1_session, ff1_driver
+                    )
+                    st.session_state.fastf1_trace = {
+                        "distance": dist,
+                        "velocity": vel,
+                        "lap_time": lap_time_ff1,
+                        "sector_times": sectors_ff1,
+                        "v_max": float(np.max(vel)),
+                        "year": ff1_year,
+                        "gp": gp_name,
+                        "session": ff1_session,
+                        "driver": ff1_driver,
+                        "track": ff1_track,
+                    }
+                    st.sidebar.success(
+                        f"Lap: {int(lap_time_ff1 // 60)}:{lap_time_ff1 % 60:06.3f} | "
+                        f"V_max: {float(np.max(vel)) * 3.6:.1f} km/h"
+                    )
+                except Exception as e:
+                    st.sidebar.error(f"Download failed: {e}")
+                    st.session_state.fastf1_trace = None
+
+        # Use stored trace data
+        if st.session_state.fastf1_trace is not None:
+            trace = st.session_state.fastf1_trace
+            ref_distance = trace["distance"]
+            ref_velocity = trace["velocity"]
+            use_trace_mode = True
+
+            # Auto-fill sector times and v_max from telemetry
+            target_s1 = trace["sector_times"][0]
+            target_s2 = trace["sector_times"][1]
+            target_s3 = trace["sector_times"][2]
+            target_v_max_ms = trace["v_max"]
+
+            st.sidebar.caption(
+                f"Sectors: {target_s1:.3f} | {target_s2:.3f} | {target_s3:.3f} | "
+                f"V_max: {target_v_max_ms * 3.6:.1f} km/h"
+            )
+        else:
+            st.sidebar.info("Click 'Download Telemetry' to fetch data.")
+
+if target_source == "Manual":
+    st.sidebar.header("Target Sector Times")
+
+    col1, col2, col3 = st.sidebar.columns(3)
+    with col1:
+        target_s1 = st.number_input(
+            "S1 [s]", min_value=10.0, max_value=120.0, value=24.0, step=0.1, format="%.3f"
+        )
+    with col2:
+        target_s2 = st.number_input(
+            "S2 [s]", min_value=10.0, max_value=120.0, value=26.5, step=0.1, format="%.3f"
+        )
+    with col3:
+        target_s3 = st.number_input(
+            "S3 [s]", min_value=10.0, max_value=120.0, value=40.4, step=0.1, format="%.3f"
+        )
+
+    target_total = target_s1 + target_s2 + target_s3
+    st.sidebar.caption(f"Total: **{int(target_total // 60)}:{target_total % 60:06.3f}**")
+
+    st.sidebar.header("Target Max Velocity")
+    target_v_max = st.sidebar.number_input(
+        "V_max [km/h]",
+        min_value=200.0,
+        max_value=400.0,
+        value=320.0,
+        step=1.0,
+        help="Speed trap / maximum velocity target. Adding this 4th constraint makes the system well-determined (4 params, 4 targets).",
+    )
+    target_v_max_ms = target_v_max / 3.6  # Convert to m/s
 
 st.sidebar.header("Search Method")
 search_method = st.sidebar.radio(
@@ -791,12 +942,19 @@ if run_button:
         (pow_max_min + pow_max_max) / 2,
     ]
 
+    # Common optimizer kwargs for trace mode
+    trace_kwargs = {}
+    if use_trace_mode:
+        trace_kwargs = {"ref_distance": ref_distance, "ref_velocity": ref_velocity}
+
     aborted = False
     best_params = None
     best_sectors = None
     best_lap = None
     best_v_max = None
     best_error = None
+    best_sim_distance = None
+    best_sim_velocity = None
 
     if search_method == "Grid Search":
         # Step sizes
@@ -822,11 +980,13 @@ if run_button:
             st.write(
                 f"Step sizes: aero={aero_step} m², mass={mass_step} kg, power={power_step / 1e3:.0f} kW"
             )
+            if use_trace_mode:
+                st.write("Objective: speed trace RMSE (m/s)")
             st.write("---")
             log_container = st.container()
 
             try:
-                best_params, best_sectors, best_lap, best_v_max, best_error = (
+                best_params, best_sectors, best_lap, best_v_max, best_error, best_sim_distance, best_sim_velocity = (
                     run_grid_search(
                         track,
                         base_config,
@@ -837,6 +997,7 @@ if run_button:
                         aero_step,
                         mass_step,
                         power_step,
+                        **trace_kwargs,
                     )
                 )
 
@@ -870,11 +1031,13 @@ if run_button:
             st.write(
                 f"Starting from: drag={initial_guess[0]:.2f}, df={initial_guess[1]:.2f}, m={initial_guess[2]:.0f}, P={initial_guess[3] / 1e3:.0f}kW"
             )
+            if use_trace_mode:
+                st.write("Objective: speed trace RMSE (m/s)")
             st.write("---")
             log_container = st.container()
 
             try:
-                best_params, best_sectors, best_lap, best_v_max, best_error = (
+                best_params, best_sectors, best_lap, best_v_max, best_error, best_sim_distance, best_sim_velocity = (
                     run_nelder_mead(
                         track,
                         base_config,
@@ -883,6 +1046,7 @@ if run_button:
                         initial_guess,
                         bounds,
                         log_container,
+                        **trace_kwargs,
                     )
                 )
 
@@ -918,11 +1082,13 @@ if run_button:
             st.write(
                 f"Starting from: drag={initial_guess[0]:.2f}, df={initial_guess[1]:.2f}, m={initial_guess[2]:.0f}, P={initial_guess[3] / 1e3:.0f}kW"
             )
+            if use_trace_mode:
+                st.write("Objective: speed trace RMSE (m/s)")
             st.write("---")
             log_container = st.container()
 
             try:
-                best_params, best_sectors, best_lap, best_v_max, best_error = (
+                best_params, best_sectors, best_lap, best_v_max, best_error, best_sim_distance, best_sim_velocity = (
                     run_trust_constr(
                         track,
                         base_config,
@@ -931,6 +1097,7 @@ if run_button:
                         initial_guess,
                         bounds,
                         log_container,
+                        **trace_kwargs,
                     )
                 )
 
@@ -964,11 +1131,13 @@ if run_button:
             st.write(
                 f"Starting from: drag={initial_guess[0]:.2f}, df={initial_guess[1]:.2f}, m={initial_guess[2]:.0f}, P={initial_guess[3] / 1e3:.0f}kW"
             )
+            if use_trace_mode:
+                st.write("Objective: speed trace RMSE (m/s)")
             st.write("---")
             log_container = st.container()
 
             try:
-                best_params, best_sectors, best_lap, best_v_max, best_error = (
+                best_params, best_sectors, best_lap, best_v_max, best_error, best_sim_distance, best_sim_velocity = (
                     run_lbfgsb(
                         track,
                         base_config,
@@ -977,6 +1146,7 @@ if run_button:
                         initial_guess,
                         bounds,
                         log_container,
+                        **trace_kwargs,
                     )
                 )
 
@@ -1038,6 +1208,11 @@ if run_button:
         "simulated_v_max": best_v_max,
         "track": track,
         "vehicle": vehicle_base,
+        "use_trace": use_trace_mode,
+        "sim_distance": best_sim_distance,
+        "sim_velocity": best_sim_velocity,
+        "ref_distance": ref_distance,
+        "ref_velocity": ref_velocity,
     }
 
 # Display results
@@ -1119,12 +1294,72 @@ if st.session_state.param_id_result is not None:
         color = "green" if abs(v_diff) < 5 else "orange" if abs(v_diff) < 10 else "red"
         st.markdown(f"**Difference:** :{color}[{v_diff:+.1f} km/h]")
 
+    # Speed trace overlay plot (when trace data is available)
+    if res.get("use_trace") and res.get("sim_distance") is not None and res.get("ref_distance") is not None:
+        st.divider()
+        st.header("Speed Trace Comparison")
+
+        sim_dist = res["sim_distance"]
+        sim_vel = res["sim_velocity"]
+        r_dist = res["ref_distance"]
+        r_vel = res["ref_velocity"]
+
+        # Normalize distances to 0-1 for overlay
+        sim_dist_norm = sim_dist / sim_dist[-1]
+        ref_dist_norm = r_dist / r_dist[-1]
+
+        # Interpolate sim onto ref grid for delta calculation
+        sim_vel_interp = np.interp(ref_dist_norm, sim_dist_norm, sim_vel)
+        delta_vel = sim_vel_interp - r_vel
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), height_ratios=[3, 1], sharex=True)
+
+        ax1.plot(ref_dist_norm * r_dist[-1] / 1000, r_vel * 3.6, label="FastF1 Reference", color="tab:blue", alpha=0.8)
+        ax1.plot(sim_dist / 1000, sim_vel * 3.6, label="Simulation (Best Fit)", color="tab:red", alpha=0.8)
+        ax1.set_ylabel("Speed [km/h]")
+        ax1.legend(loc="upper right")
+        ax1.grid(True, alpha=0.3)
+        rmse = compute_trace_error(sim_dist, sim_vel, r_dist, r_vel)
+        ax1.set_title(f"Speed Trace Overlay (RMSE: {rmse:.2f} m/s)")
+
+        ax2.plot(ref_dist_norm * r_dist[-1] / 1000, delta_vel * 3.6, color="tab:green", alpha=0.8)
+        ax2.axhline(y=0, color="gray", linestyle="--", alpha=0.5)
+        ax2.set_xlabel("Distance [km]")
+        ax2.set_ylabel("Delta [km/h]")
+        ax2.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
+
     st.divider()
     st.caption(f"Track: {res['track']} | Base vehicle: {res['vehicle']}")
 
 else:
+    # Show preview of downloaded speed trace if available
+    if st.session_state.fastf1_trace is not None:
+        trace = st.session_state.fastf1_trace
+        st.subheader("Downloaded Speed Trace Preview")
+
+        fig, ax = plt.subplots(figsize=(12, 4))
+        ax.plot(trace["distance"] / 1000, trace["velocity"] * 3.6, color="tab:blue")
+        ax.set_xlabel("Distance [km]")
+        ax.set_ylabel("Speed [km/h]")
+        driver_str = trace["driver"] if trace["driver"] else "Fastest"
+        ax.set_title(f"{trace['year']} {trace['gp']} ({trace['session']}) - {driver_str}")
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
+
+        st.caption(
+            f"Lap time: {int(trace['lap_time'] // 60)}:{trace['lap_time'] % 60:06.3f} | "
+            f"V_max: {trace['v_max'] * 3.6:.1f} km/h | "
+            f"Sectors: {trace['sector_times'][0]:.3f} / {trace['sector_times'][1]:.3f} / {trace['sector_times'][2]:.3f}"
+        )
+
     st.info(
-        "👈 Select a track, vehicle, enter target sector times and max velocity, then click **Find Parameters**."
+        "Select a track, vehicle, enter target sector times (or download FastF1 telemetry), then click **Find Parameters**."
     )
 
     col1, col2 = st.columns(2)
@@ -1134,20 +1369,17 @@ else:
         ### How it works
 
         This tool uses optimization to find vehicle parameters that match
-        your input targets (3 sector times + max velocity).
+        your input targets.
 
         **Parameters identified (4):**
-        - Drag coefficient × area (c_w × A)
-        - Total downforce coefficient × area (c_z × A)
+        - Drag coefficient x area (c_w x A)
+        - Total downforce coefficient x area (c_z x A)
         - Vehicle mass
         - Engine power (pow_max)
 
-        **Target constraints (4):**
-        - Sector 1, 2, 3 times
-        - Maximum velocity (speed trap)
-
-        Having 4 targets for 4 parameters makes the system well-determined,
-        leading to better convergence than using sector times alone.
+        **Target modes:**
+        - **Manual:** 3 sector times + max velocity (4 constraints)
+        - **FastF1 Telemetry:** Full speed trace from real F1 data (hundreds of constraints)
         """)
 
     with col2:
@@ -1157,5 +1389,6 @@ else:
         - Use realistic sector times for the selected track
         - Adjust parameter bounds if the optimization struggles
         - The optimization runs multiple simulations, so it may take a few minutes
-        - Results work best when sector times are achievable with the base vehicle's powertrain
+        - **FastF1 mode** uses the full speed trace as objective (RMSE in m/s),
+          capturing braking zones, apex speeds, and straights
         """)
