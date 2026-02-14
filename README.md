@@ -5,9 +5,10 @@ Additional packages that belong to the [project](https://github.com/TUMFTM)
 have also been downloaded into this new repo:  
 - [global_racetrajectory_optimization](https://github.com/TUMFTM/global_racetrajectory_optimization)  
 - [trajectory_planning_helpers](https://github.com/TUMFTM/trajectory_planning_helpers)  
-
-The intent is to upgrade it for futher applications.  
-For this mission, a set of tasks has to get completed:  
+  
+  
+### The intent is to upgrade it for futher applications.  
+### For this mission, a set of tasks has to get completed:  
 - [x] Write tests  
 - [x] Update Python and used modules versions  
 - [x] Add posibilities to include various other car concepts  

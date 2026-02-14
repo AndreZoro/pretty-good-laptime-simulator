@@ -10,9 +10,10 @@ import json
 import os
 import time
 
-import matplotlib.pyplot as plt
 import numpy as np
+import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 from scipy.optimize import Bounds, minimize
 
 from helpers.fastf1_data import (
@@ -731,7 +732,7 @@ if target_source == "FastF1 Telemetry":
         ff1_driver = ff1_driver.strip().upper() or None
 
         download_button = st.sidebar.button(
-            "Download Telemetry", type="secondary", use_container_width=True
+            "Download Telemetry", type="secondary", width="stretch"
         )
 
         if download_button:
@@ -876,11 +877,9 @@ st.sidebar.divider()
 
 col_run, col_abort = st.sidebar.columns(2)
 with col_run:
-    run_button = st.button(
-        "🔍 Find Parameters", type="primary", use_container_width=True
-    )
+    run_button = st.button("🔍 Find Parameters", type="primary", width="stretch")
 with col_abort:
-    abort_button = st.button("⏹ Abort", type="secondary", use_container_width=True)
+    abort_button = st.button("⏹ Abort", type="secondary", width="stretch")
 
 if abort_button:
     st.session_state.param_id_abort = True
@@ -1354,44 +1353,59 @@ if st.session_state.param_id_result is not None:
         sim_vel_interp = np.interp(ref_dist_norm, sim_dist_norm, sim_vel)
         delta_vel = sim_vel_interp - r_vel
 
-        fig, (ax1, ax2) = plt.subplots(
-            2, 1, figsize=(12, 6), height_ratios=[3, 1], sharex=True
-        )
-
-        ax1.plot(
-            ref_dist_norm * r_dist[-1] / 1000,
-            r_vel * 3.6,
-            label="FastF1 Reference",
-            color="tab:blue",
-            alpha=0.8,
-        )
-        ax1.plot(
-            sim_dist / 1000,
-            sim_vel * 3.6,
-            label="Simulation (Best Fit)",
-            color="tab:red",
-            alpha=0.8,
-        )
-        ax1.set_ylabel("Speed [km/h]")
-        ax1.legend(loc="upper right")
-        ax1.grid(True, alpha=0.3)
         rmse = compute_trace_error(sim_dist, sim_vel, r_dist, r_vel)
-        ax1.set_title(f"Speed Trace Overlay (RMSE: {rmse:.2f} m/s)")
 
-        ax2.plot(
-            ref_dist_norm * r_dist[-1] / 1000,
-            delta_vel * 3.6,
-            color="tab:green",
-            alpha=0.8,
+        fig = make_subplots(
+            rows=2,
+            cols=1,
+            shared_xaxes=True,
+            row_heights=[0.75, 0.25],
+            vertical_spacing=0.06,
         )
-        ax2.axhline(y=0, color="gray", linestyle="--", alpha=0.5)
-        ax2.set_xlabel("Distance [km]")
-        ax2.set_ylabel("Delta [km/h]")
-        ax2.grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
+        fig.add_trace(
+            go.Scatter(
+                x=ref_dist_norm * r_dist[-1] / 1000,
+                y=r_vel * 3.6,
+                name="FastF1 Reference",
+                line=dict(color="#1f77b4"),
+            ),
+            row=1,
+            col=1,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=sim_dist / 1000,
+                y=sim_vel * 3.6,
+                name="Simulation (Best Fit)",
+                line=dict(color="#d62728"),
+            ),
+            row=1,
+            col=1,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=ref_dist_norm * r_dist[-1] / 1000,
+                y=delta_vel * 3.6,
+                name="Delta",
+                line=dict(color="#2ca02c"),
+                showlegend=False,
+            ),
+            row=2,
+            col=1,
+        )
+        fig.add_hline(
+            y=0, line_dash="dash", line_color="gray", opacity=0.5, row=2, col=1
+        )
+        fig.update_yaxes(title_text="Speed [km/h]", row=1, col=1)
+        fig.update_yaxes(title_text="Delta [km/h]", row=2, col=1)
+        fig.update_xaxes(title_text="Distance [km]", row=2, col=1)
+        fig.update_layout(
+            title=f"Speed Trace Overlay (RMSE: {rmse:.2f} m/s)",
+            height=500,
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        )
+        st.plotly_chart(fig, width="stretch")
 
         # Additional telemetry comparison plots
         ff1_trace = res.get("fastf1_trace")
@@ -1408,141 +1422,163 @@ if st.session_state.param_id_result is not None:
             # --- Gear comparison ---
             if ff1_trace.get("gear") is not None:
                 st.subheader("Gear Comparison")
-                fig_gear, ax_gear = plt.subplots(figsize=(12, 3))
-                ax_gear.plot(
-                    ref_dist_km,
+                gear_data = (
                     ff1_trace["gear"][: len(ref_dist_km)]
                     if len(ff1_trace["gear"]) >= len(ref_dist_km)
-                    else ff1_trace["gear"],
-                    label="FastF1",
-                    color="tab:blue",
-                    alpha=0.8,
-                    drawstyle="steps-post",
+                    else ff1_trace["gear"]
+                )
+                fig_gear = go.Figure()
+                fig_gear.add_trace(
+                    go.Scatter(
+                        x=ref_dist_km,
+                        y=gear_data,
+                        name="FastF1",
+                        line=dict(color="#1f77b4", shape="hv"),
+                    )
                 )
                 if sim_result is not None:
-                    ax_gear.plot(
-                        sim_dist_full_km,
-                        sim_result.gear,
-                        label="Simulation",
-                        color="tab:red",
-                        alpha=0.8,
-                        drawstyle="steps-post",
+                    fig_gear.add_trace(
+                        go.Scatter(
+                            x=sim_dist_full_km,
+                            y=sim_result.gear,
+                            name="Simulation",
+                            line=dict(color="#d62728", shape="hv"),
+                        )
                     )
-                ax_gear.set_xlabel("Distance [km]")
-                ax_gear.set_ylabel("Gear")
-                ax_gear.legend(loc="upper right")
-                ax_gear.grid(True, alpha=0.3)
-                plt.tight_layout()
-                st.pyplot(fig_gear)
-                plt.close(fig_gear)
+                fig_gear.update_layout(
+                    xaxis_title="Distance [km]",
+                    yaxis_title="Gear",
+                    height=250,
+                    hovermode="x unified",
+                    legend=dict(
+                        orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
+                    ),
+                )
+                st.plotly_chart(fig_gear, width="stretch")
 
             # --- RPM comparison ---
             if ff1_trace.get("rpm") is not None:
                 st.subheader("RPM Comparison")
-                fig_rpm, ax_rpm = plt.subplots(figsize=(12, 3))
-                ax_rpm.plot(
-                    ref_dist_km,
+                rpm_data = (
                     ff1_trace["rpm"][: len(ref_dist_km)]
                     if len(ff1_trace["rpm"]) >= len(ref_dist_km)
-                    else ff1_trace["rpm"],
-                    label="FastF1",
-                    color="tab:blue",
-                    alpha=0.8,
+                    else ff1_trace["rpm"]
+                )
+                fig_rpm = go.Figure()
+                fig_rpm.add_trace(
+                    go.Scatter(
+                        x=ref_dist_km,
+                        y=rpm_data,
+                        name="FastF1",
+                        line=dict(color="#1f77b4"),
+                    )
                 )
                 if sim_result is not None and sim_result.rpm is not None:
-                    ax_rpm.plot(
-                        sim_dist_full_km,
-                        sim_result.rpm,
-                        label="Simulation",
-                        color="tab:red",
-                        alpha=0.8,
+                    fig_rpm.add_trace(
+                        go.Scatter(
+                            x=sim_dist_full_km,
+                            y=sim_result.rpm,
+                            name="Simulation",
+                            line=dict(color="#d62728"),
+                        )
                     )
-                ax_rpm.set_xlabel("Distance [km]")
-                ax_rpm.set_ylabel("RPM")
-                ax_rpm.legend(loc="upper right")
-                ax_rpm.grid(True, alpha=0.3)
-                plt.tight_layout()
-                st.pyplot(fig_rpm)
-                plt.close(fig_rpm)
+                fig_rpm.update_layout(
+                    xaxis_title="Distance [km]",
+                    yaxis_title="RPM",
+                    height=250,
+                    hovermode="x unified",
+                    legend=dict(
+                        orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
+                    ),
+                )
+                st.plotly_chart(fig_rpm, width="stretch")
 
             # --- DRS comparison ---
             if ff1_trace.get("drs_active") is not None:
                 st.subheader("DRS Comparison")
-                fig_drs, ax_drs = plt.subplots(figsize=(12, 2))
-                ax_drs.fill_between(
-                    ref_dist_km,
+                drs_data = (
                     ff1_trace["drs_active"][: len(ref_dist_km)]
                     if len(ff1_trace["drs_active"]) >= len(ref_dist_km)
-                    else ff1_trace["drs_active"],
-                    step="post",
-                    alpha=0.3,
-                    color="tab:blue",
-                    label="FastF1",
+                    else ff1_trace["drs_active"]
+                )
+                fig_drs = go.Figure()
+                fig_drs.add_trace(
+                    go.Scatter(
+                        x=ref_dist_km,
+                        y=drs_data,
+                        name="FastF1",
+                        line=dict(color="#1f77b4", shape="hv"),
+                        fill="tozeroy",
+                        fillcolor="rgba(31,119,180,0.3)",
+                    )
                 )
                 if sim_result is not None and sim_result.drs is not None:
-                    ax_drs.fill_between(
-                        sim_dist_full_km,
-                        sim_result.drs.astype(float),
-                        step="post",
-                        alpha=0.3,
-                        color="tab:red",
-                        label="Simulation",
+                    fig_drs.add_trace(
+                        go.Scatter(
+                            x=sim_dist_full_km,
+                            y=sim_result.drs.astype(float),
+                            name="Simulation",
+                            line=dict(color="#d62728", shape="hv"),
+                            fill="tozeroy",
+                            fillcolor="rgba(214,39,40,0.3)",
+                        )
                     )
-                ax_drs.set_xlabel("Distance [km]")
-                ax_drs.set_ylabel("DRS")
-                ax_drs.set_yticks([0, 1])
-                ax_drs.set_yticklabels(["Closed", "Open"])
-                ax_drs.legend(loc="upper right")
-                ax_drs.grid(True, alpha=0.3)
-                plt.tight_layout()
-                st.pyplot(fig_drs)
-                plt.close(fig_drs)
+                fig_drs.update_layout(
+                    xaxis_title="Distance [km]",
+                    yaxis_title="DRS",
+                    height=200,
+                    hovermode="x unified",
+                    yaxis=dict(tickvals=[0, 1], ticktext=["Closed", "Open"]),
+                    legend=dict(
+                        orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
+                    ),
+                )
+                st.plotly_chart(fig_drs, width="stretch")
 
             # --- Throttle (FastF1) with sim longitudinal acceleration as proxy ---
             if ff1_trace.get("throttle") is not None:
                 st.subheader("Throttle & Longitudinal Acceleration")
-                fig_thr, ax_thr = plt.subplots(figsize=(12, 3))
-                ax_thr.plot(
-                    ref_dist_km,
+                throttle_data = (
                     ff1_trace["throttle"][: len(ref_dist_km)]
                     if len(ff1_trace["throttle"]) >= len(ref_dist_km)
-                    else ff1_trace["throttle"],
-                    label="FastF1 Throttle [%]",
-                    color="tab:blue",
-                    alpha=0.8,
+                    else ff1_trace["throttle"]
                 )
-                ax_thr.set_xlabel("Distance [km]")
-                ax_thr.set_ylabel("Throttle [%]", color="tab:blue")
-                ax_thr.tick_params(axis="y", labelcolor="tab:blue")
-                ax_thr.grid(True, alpha=0.3)
-
+                fig_thr = make_subplots(specs=[[{"secondary_y": True}]])
+                fig_thr.add_trace(
+                    go.Scatter(
+                        x=ref_dist_km,
+                        y=throttle_data,
+                        name="FastF1 Throttle [%]",
+                        line=dict(color="#1f77b4"),
+                    ),
+                    secondary_y=False,
+                )
                 if sim_result is not None:
-                    ax_acc = ax_thr.twinx()
-                    ax_acc.plot(
-                        sim_dist_full_km,
-                        sim_result.acceleration,
-                        label="Sim Longitudinal Accel [m/s²]",
-                        color="tab:red",
-                        alpha=0.6,
+                    fig_thr.add_trace(
+                        go.Scatter(
+                            x=sim_dist_full_km,
+                            y=sim_result.acceleration,
+                            name="Sim Longitudinal Accel [m/s²]",
+                            line=dict(color="#d62728"),
+                            opacity=0.6,
+                        ),
+                        secondary_y=True,
                     )
-                    ax_acc.set_ylabel("Acceleration [m/s²]", color="tab:red")
-                    ax_acc.tick_params(axis="y", labelcolor="tab:red")
-
-                # Combined legend
-                lines1, labels1 = ax_thr.get_legend_handles_labels()
-                if sim_result is not None:
-                    lines2, labels2 = ax_acc.get_legend_handles_labels()
-                    ax_thr.legend(lines1 + lines2, labels1 + labels2, loc="upper right")
-                else:
-                    ax_thr.legend(loc="upper right")
-                plt.tight_layout()
-                st.pyplot(fig_thr)
-                plt.close(fig_thr)
+                fig_thr.update_xaxes(title_text="Distance [km]")
+                fig_thr.update_yaxes(title_text="Throttle [%]", secondary_y=False)
+                fig_thr.update_yaxes(title_text="Acceleration [m/s²]", secondary_y=True)
+                fig_thr.update_layout(
+                    height=250,
+                    hovermode="x unified",
+                    legend=dict(
+                        orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
+                    ),
+                )
+                st.plotly_chart(fig_thr, width="stretch")
 
             # --- Brake (FastF1) with sim negative acceleration as proxy ---
             if ff1_trace.get("brake") is not None:
                 st.subheader("Brake & Deceleration")
-                fig_brk, ax_brk = plt.subplots(figsize=(12, 3))
                 brake_data = ff1_trace["brake"]
                 # Brake can be boolean (0/1) or percentage (0-100)
                 brake_vals = (
@@ -1550,42 +1586,42 @@ if st.session_state.param_id_result is not None:
                     if len(brake_data) >= len(ref_dist_km)
                     else brake_data
                 )
-                ax_brk.fill_between(
-                    ref_dist_km,
-                    brake_vals,
-                    step="post",
-                    alpha=0.4,
-                    color="tab:blue",
-                    label="FastF1 Brake",
+                fig_brk = make_subplots(specs=[[{"secondary_y": True}]])
+                fig_brk.add_trace(
+                    go.Scatter(
+                        x=ref_dist_km,
+                        y=brake_vals,
+                        name="FastF1 Brake",
+                        line=dict(color="#1f77b4", shape="hv"),
+                        fill="tozeroy",
+                        fillcolor="rgba(31,119,180,0.4)",
+                    ),
+                    secondary_y=False,
                 )
-                ax_brk.set_xlabel("Distance [km]")
-                ax_brk.set_ylabel("Brake", color="tab:blue")
-                ax_brk.tick_params(axis="y", labelcolor="tab:blue")
-                ax_brk.grid(True, alpha=0.3)
-
                 if sim_result is not None:
-                    ax_dec = ax_brk.twinx()
                     # Show negative acceleration (braking) as positive values
                     decel = np.clip(-sim_result.acceleration, 0, None)
-                    ax_dec.plot(
-                        sim_dist_full_km,
-                        decel,
-                        label="Sim Deceleration [m/s²]",
-                        color="tab:red",
-                        alpha=0.6,
+                    fig_brk.add_trace(
+                        go.Scatter(
+                            x=sim_dist_full_km,
+                            y=decel,
+                            name="Sim Deceleration [m/s²]",
+                            line=dict(color="#d62728"),
+                            opacity=0.6,
+                        ),
+                        secondary_y=True,
                     )
-                    ax_dec.set_ylabel("Deceleration [m/s²]", color="tab:red")
-                    ax_dec.tick_params(axis="y", labelcolor="tab:red")
-
-                lines1, labels1 = ax_brk.get_legend_handles_labels()
-                if sim_result is not None:
-                    lines2, labels2 = ax_dec.get_legend_handles_labels()
-                    ax_brk.legend(lines1 + lines2, labels1 + labels2, loc="upper right")
-                else:
-                    ax_brk.legend(loc="upper right")
-                plt.tight_layout()
-                st.pyplot(fig_brk)
-                plt.close(fig_brk)
+                fig_brk.update_xaxes(title_text="Distance [km]")
+                fig_brk.update_yaxes(title_text="Brake", secondary_y=False)
+                fig_brk.update_yaxes(title_text="Deceleration [m/s²]", secondary_y=True)
+                fig_brk.update_layout(
+                    height=250,
+                    hovermode="x unified",
+                    legend=dict(
+                        orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
+                    ),
+                )
+                st.plotly_chart(fig_brk, width="stretch")
 
     # Full simulation data visualization
     if res.get("sim_result") is not None:
@@ -1621,28 +1657,75 @@ else:
             channels.append(("DRS", trace["drs_active"], "tab:purple", "fill"))
 
         n_panels = len(channels)
-        fig, axes = plt.subplots(n_panels, 1, figsize=(12, 2.5 * n_panels), sharex=True)
-        if n_panels == 1:
-            axes = [axes]
+        fig = make_subplots(
+            rows=n_panels,
+            cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.04,
+        )
 
-        fig.suptitle(title_str, fontsize=12)
+        # Color map for plotly hex colors
+        color_map = {
+            "tab:blue": "#1f77b4",
+            "tab:orange": "#ff7f0e",
+            "tab:green": "#2ca02c",
+            "tab:red": "#d62728",
+            "tab:purple": "#9467bd",
+        }
 
-        for ax, (label, data, color, style) in zip(axes, channels):
+        for i, (label, data, color, style) in enumerate(channels, 1):
             d = dist_km[: len(data)] if len(data) <= len(dist_km) else dist_km
             v = data[: len(d)] if len(data) >= len(d) else data
+            hex_color = color_map.get(color, color)
             if style == "step":
-                ax.plot(d, v, color=color, drawstyle="steps-post")
+                fig.add_trace(
+                    go.Scatter(
+                        x=d,
+                        y=v,
+                        name=label,
+                        line=dict(color=hex_color, shape="hv"),
+                        showlegend=False,
+                    ),
+                    row=i,
+                    col=1,
+                )
             elif style == "fill":
-                ax.fill_between(d, v, step="post", alpha=0.5, color=color)
+                fig.add_trace(
+                    go.Scatter(
+                        x=d,
+                        y=v,
+                        name=label,
+                        line=dict(color=hex_color, shape="hv"),
+                        fill="tozeroy",
+                        fillcolor=hex_color.replace(")", ",0.5)").replace("rgb", "rgba")
+                        if "rgb" in hex_color
+                        else f"rgba{tuple(list(int(hex_color.lstrip('#')[j : j + 2], 16) for j in (0, 2, 4)) + [0.5])}",
+                        showlegend=False,
+                    ),
+                    row=i,
+                    col=1,
+                )
             else:
-                ax.plot(d, v, color=color)
-            ax.set_ylabel(label)
-            ax.grid(True, alpha=0.3)
+                fig.add_trace(
+                    go.Scatter(
+                        x=d,
+                        y=v,
+                        name=label,
+                        line=dict(color=hex_color),
+                        showlegend=False,
+                    ),
+                    row=i,
+                    col=1,
+                )
+            fig.update_yaxes(title_text=label, row=i, col=1)
 
-        axes[-1].set_xlabel("Distance [km]")
-        plt.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
+        fig.update_xaxes(title_text="Distance [km]", row=n_panels, col=1)
+        fig.update_layout(
+            title=title_str,
+            height=200 * n_panels,
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig, width="stretch")
 
         st.caption(
             f"Lap time: {int(trace['lap_time'] // 60)}:{trace['lap_time'] % 60:06.3f} | "
