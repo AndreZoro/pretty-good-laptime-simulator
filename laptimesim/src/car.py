@@ -412,12 +412,11 @@ class Car(object):
         # get gear at velocity
         gear = self.find_gear(vel=vel)[0]
 
-        # calculate powertrain torque
+        # calculate powertrain torque (pure mechanical conversion, e_i is handled in the equation of motion)
         m_requ = (
             f_x
             * self.r_driven_tire(vel=vel)
             * self.pars_gearbox["i_trans"][gear]
-            * self.pars_gearbox["e_i"][gear]
             / self.pars_gearbox["eta_g"]
         )
 

@@ -93,7 +93,7 @@ class Lap(object):
         self.gear_cl = np.zeros(
             trackobj.no_points_cl, dtype=int
         )  # [-] gear during current step, zero based in solver
-        # [kJ] energy recuperated during the current step available at the beginning of next step
+        # [J] energy recuperated during the current step available at the beginning of next step
         self.e_rec_e_motor = np.zeros(trackobj.no_points)
         self.a_x_final = 0.0
         self.fuel_cons_cl = np.zeros(
@@ -483,6 +483,7 @@ class Lap(object):
         vel_lim = self.trackobj.vel_lim
         no_points = self.trackobj.no_points
         pars_general_m = carobj.pars_general["m"]
+        pars_gearbox_e_i = carobj.pars_gearbox["e_i"]
         powertrain_type = carobj.powertrain_type
         pars_solver = self.pars_solver
         pars_driver = driverobj.pars_driver
@@ -593,23 +594,22 @@ class Lap(object):
                     )
                 )
 
-                # calculate available acceleration force in powertrain
+                # calculate available acceleration force at the tire
                 f_x_powert = (
                     carobj.pars_gearbox["eta_g"]
                     * (m_eng[i] + m_e_motor[i])
                     / (
                         carobj.pars_gearbox["i_trans"][gear_cl[i]]
                         * carobj.r_driven_tire(vel=vel_cl[i])
-                        * carobj.pars_gearbox["e_i"][gear_cl[i]]
                     )
                 )
 
-                # calculate reached longitudinal acceleration
+                # calculate reached longitudinal acceleration (e_i accounts for rotational inertia)
                 a_x = (
                     f_x_powert
                     - carobj.air_res(vel=vel_cl[i], drs=drs[i])
                     - carobj.roll_res(f_z_tot=tire_loads[i].sum())
-                ) / pars_general_m
+                ) / (pars_general_m * pars_gearbox_e_i[gear_cl[i]])
 
                 # calculate velocity in the next point
                 vel_cl[i + 1] = math.sqrt(
@@ -629,7 +629,7 @@ class Lap(object):
                     f_x_target = (
                         carobj.air_res(vel=vel_cl[i], drs=False)
                         + carobj.roll_res(f_z_tot=tire_loads[i].sum())
-                        + pars_general_m * a_x
+                        + pars_general_m * pars_gearbox_e_i[gear_cl[i]] * a_x
                     )
 
                     # calculate torque distribution within the hybrid system (trying to reach the possible force f_x)
