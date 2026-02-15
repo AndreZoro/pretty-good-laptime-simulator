@@ -1,7 +1,9 @@
-import main_laptimesim
 import os
 import pickle
+
 import numpy as np
+
+import main_laptimesim
 
 
 def test_laptimesim():
@@ -73,8 +75,8 @@ def test_laptimesim():
     with open(target_lap_path_, "rb") as fh:
         target_lap = pickle.load(fh)
 
-    for tl, l in zip(target_lap.vel_cl, lap.vel_cl):
-        print(tl, l)
+    # for tl, l in zip(target_lap.vel_cl, lap.vel_cl):
+    #     print(tl, l)
     assert np.allclose(target_lap.vel_cl, lap.vel_cl, rtol=1e-2, atol=1e-2)
     print("Test passed!")
 
