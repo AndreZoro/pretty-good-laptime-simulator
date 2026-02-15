@@ -677,7 +677,7 @@ available_tracks = get_available_tracks()
 track = st.sidebar.selectbox(
     "Track",
     options=available_tracks,
-    index=available_tracks.index("Shanghai") if "Shanghai" in available_tracks else 0,
+    index=available_tracks.index("Spa") if "Spa" in available_tracks else 0,
 )
 
 # Vehicle base configuration
