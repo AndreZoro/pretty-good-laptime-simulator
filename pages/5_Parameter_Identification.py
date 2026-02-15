@@ -726,7 +726,7 @@ if target_source == "FastF1 Telemetry":
         )
         ff1_driver = st.sidebar.text_input(
             "Driver (optional)",
-            value="NOR",
+            value="",
             help="3-letter abbreviation (e.g. VER, HAM). Leave empty for fastest lap.",
         )
         ff1_driver = ff1_driver.strip().upper() or None
