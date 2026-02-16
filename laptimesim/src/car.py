@@ -15,7 +15,7 @@ from laptimesim.src._jit_kernels import (
 )
 
 
-def _build_jit_params(pars_general, pars_engine, pars_tires):
+def _build_jit_params(pars_general, pars_engine, pars_tires, pars_gearbox):
     """Build the packed 1D float64 parameter array for JIT kernels."""
     params = np.zeros(PARAMS_SIZE, dtype=np.float64)
     params[0] = pars_general["m"]           # _M
@@ -48,6 +48,7 @@ def _build_jit_params(pars_general, pars_engine, pars_tires):
     params[16] = pars_tires["r"]["dmux_dfz"]  # _DMUX_R
     params[17] = pars_tires["r"]["dmuy_dfz"]  # _DMUY_R
     params[18] = pars_tires["r"]["fz_0"]      # _FZ0_R
+    params[19] = pars_gearbox.get("diff_lock_ratio", 1.0)  # _DIFF_LOCK
     return params
 
 
@@ -179,7 +180,7 @@ class Car(object):
         self.f_z_calc_stat["trans_lat_sign"] = np.array([-1.0, 1.0, -1.0, 1.0])
 
         # build packed parameter arrays for JIT kernels
-        self._jit_params = _build_jit_params(pars_general, pars_engine, pars_tires)
+        self._jit_params = _build_jit_params(pars_general, pars_engine, pars_tires, pars_gearbox)
         self._jit_fz_data = _build_jit_fz_data(self.f_z_calc_stat)
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -368,11 +369,12 @@ class Car(object):
             )
 
         lbs_flag = _LBS_MAP[limit_braking_weak_side]
+        diff_lock_ratio = self.pars_gearbox.get("diff_lock_ratio", 1.0)
         return _calc_f_x_pot(
             f_x_pot_fl, f_x_pot_fr, f_x_pot_rl, f_x_pot_rr,
             f_y_pot_f, f_y_pot_r, f_y_f, f_y_r,
             int(self._jit_params[7]), self.pars_tires["tire_model_exp"],
-            force_use_all_wheels, lbs_flag,
+            force_use_all_wheels, lbs_flag, diff_lock_ratio,
         )
 
     def calc_max_ax(

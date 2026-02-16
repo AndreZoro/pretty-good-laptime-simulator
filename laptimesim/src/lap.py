@@ -484,6 +484,7 @@ class Lap(object):
         no_points = self.trackobj.no_points
         pars_general_m = carobj.pars_general["m"]
         pars_gearbox_e_i = carobj.pars_gearbox["e_i"]
+        t_shift = carobj.pars_gearbox.get("t_shift", 0.0)
         powertrain_type = carobj.powertrain_type
         pars_solver = self.pars_solver
         pars_driver = driverobj.pars_driver
@@ -667,6 +668,23 @@ class Lap(object):
                 gear_cl[i + 1], n_cl[i + 1] = carobj.find_gear(
                     vel=vel_cl[i + 1]
                 )
+
+                # apply shift time penalty: reduce powertrain force for the fraction of the step spent shifting
+                if gear_cl[i + 1] != gear_cl[i] and t_shift > 0.0:
+                    dt_step = 2 * stepsize / (vel_cl[i] + vel_cl[i + 1])
+                    shift_fraction = min(t_shift / dt_step, 1.0)
+                    f_x_powert_shifted = f_x_powert * (1.0 - shift_fraction)
+                    a_x_shifted = (
+                        f_x_powert_shifted
+                        - carobj.air_res(vel=vel_cl[i], drs=drs[i])
+                        - carobj.roll_res(f_z_tot=tire_loads[i].sum())
+                    ) / (pars_general_m * pars_gearbox_e_i[gear_cl[i]])
+                    vel_cl[i + 1] = math.sqrt(
+                        max(vel_cl[i] * vel_cl[i] + 2 * a_x_shifted * stepsize, 0.0)
+                    )
+                    gear_cl[i + 1], n_cl[i + 1] = carobj.find_gear(
+                        vel=vel_cl[i + 1]
+                    )
 
                 # calculate time at start of next point
                 t_cl[i + 1] = t_cl[i] + 2 * stepsize / (

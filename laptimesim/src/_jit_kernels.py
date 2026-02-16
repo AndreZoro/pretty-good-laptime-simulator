@@ -43,7 +43,8 @@ _MUY_R = 15      # rear tire mu_y [-]
 _DMUX_R = 16     # rear dmu_x/dFz [1/N]
 _DMUY_R = 17     # rear dmu_y/dFz [1/N]
 _FZ0_R = 18      # rear reference load [N]
-PARAMS_SIZE = 19
+_DIFF_LOCK = 19  # differential lock ratio [-] (0=open, 1=locked)
+PARAMS_SIZE = 20
 
 # fz_data row indices (2D float64 array, shape (6, 4))
 _STAT = 0        # static load
@@ -144,27 +145,49 @@ def _calc_lat_forces(a_y, m, lf, lr):
 @njit(cache=True)
 def _calc_f_x_pot(f_x_pot_fl, f_x_pot_fr, f_x_pot_rl, f_x_pot_rr,
                   f_y_pot_f, f_y_pot_r, f_y_f, f_y_r,
-                  topology, exp, force_all_wheels, lbs_flag):
+                  topology, exp, force_all_wheels, lbs_flag, diff_lock_ratio):
     """
     Calculate remaining tire potential for longitudinal force.
     topology: 0=AWD, 1=FWD, 2=RWD
     lbs_flag: 0=None, 1=FA, 2=RA, 3=all (limit_braking_weak_side)
+    diff_lock_ratio: 0.0=open diff (weak side limited), 1.0=locked/spool (full sum)
     """
     inv_exp = 1.0 / exp
 
-    # determine axle potentials based on weak side limiting
-    if lbs_flag == 1:  # FA
-        f_x_pot_f = 2.0 * min(f_x_pot_fl, f_x_pot_fr)
-        f_x_pot_r = f_x_pot_rl + f_x_pot_rr
-    elif lbs_flag == 2:  # RA
-        f_x_pot_f = f_x_pot_fl + f_x_pot_fr
-        f_x_pot_r = 2.0 * min(f_x_pot_rl, f_x_pot_rr)
-    elif lbs_flag == 3:  # all
-        f_x_pot_f = 2.0 * min(f_x_pot_fl, f_x_pot_fr)
-        f_x_pot_r = 2.0 * min(f_x_pot_rl, f_x_pot_rr)
-    else:  # None
-        f_x_pot_f = f_x_pot_fl + f_x_pot_fr
-        f_x_pot_r = f_x_pot_rl + f_x_pot_rr
+    # determine axle potentials based on weak side limiting (braking) or diff model (acceleration)
+    if force_all_wheels:
+        # braking: use lbs_flag as before
+        if lbs_flag == 1:  # FA
+            f_x_pot_f = 2.0 * min(f_x_pot_fl, f_x_pot_fr)
+            f_x_pot_r = f_x_pot_rl + f_x_pot_rr
+        elif lbs_flag == 2:  # RA
+            f_x_pot_f = f_x_pot_fl + f_x_pot_fr
+            f_x_pot_r = 2.0 * min(f_x_pot_rl, f_x_pot_rr)
+        elif lbs_flag == 3:  # all
+            f_x_pot_f = 2.0 * min(f_x_pot_fl, f_x_pot_fr)
+            f_x_pot_r = 2.0 * min(f_x_pot_rl, f_x_pot_rr)
+        else:  # None
+            f_x_pot_f = f_x_pot_fl + f_x_pot_fr
+            f_x_pot_r = f_x_pot_rl + f_x_pot_rr
+    else:
+        # acceleration: apply differential model to driven axle(s)
+        if topology == 0:  # AWD — diff on both axles
+            f_x_pot_f_open = 2.0 * min(f_x_pot_fl, f_x_pot_fr)
+            f_x_pot_f_locked = f_x_pot_fl + f_x_pot_fr
+            f_x_pot_f = f_x_pot_f_open + diff_lock_ratio * (f_x_pot_f_locked - f_x_pot_f_open)
+            f_x_pot_r_open = 2.0 * min(f_x_pot_rl, f_x_pot_rr)
+            f_x_pot_r_locked = f_x_pot_rl + f_x_pot_rr
+            f_x_pot_r = f_x_pot_r_open + diff_lock_ratio * (f_x_pot_r_locked - f_x_pot_r_open)
+        elif topology == 1:  # FWD — diff on front axle only
+            f_x_pot_f_open = 2.0 * min(f_x_pot_fl, f_x_pot_fr)
+            f_x_pot_f_locked = f_x_pot_fl + f_x_pot_fr
+            f_x_pot_f = f_x_pot_f_open + diff_lock_ratio * (f_x_pot_f_locked - f_x_pot_f_open)
+            f_x_pot_r = f_x_pot_rl + f_x_pot_rr
+        else:  # RWD — diff on rear axle only
+            f_x_pot_f = f_x_pot_fl + f_x_pot_fr
+            f_x_pot_r_open = 2.0 * min(f_x_pot_rl, f_x_pot_rr)
+            f_x_pot_r_locked = f_x_pot_rl + f_x_pot_rr
+            f_x_pot_r = f_x_pot_r_open + diff_lock_ratio * (f_x_pot_r_locked - f_x_pot_r_open)
 
     # calculate radicands
     radicand_f = 1.0 - (abs(f_y_f) / f_y_pot_f) ** exp
@@ -225,6 +248,7 @@ def _v_max_cornering(kappa, mu, vel_subtr_corner, params, fz_data):
     rho_air = params[_RHO]
     c_w_a = params[_CWA]
     f_roll = params[_FROLL]
+    diff_lock_ratio = params[_DIFF_LOCK]
 
     ind_first = 0
     ind_last = no_steps - 1
@@ -251,7 +275,7 @@ def _v_max_cornering(kappa, mu, vel_subtr_corner, params, fz_data):
                 f_x_pot_fl, f_x_pot_fr, f_x_pot_rl, f_x_pot_rr,
                 f_y_pot_fl + f_y_pot_fr, f_y_pot_rl + f_y_pot_rr,
                 f_y_f, f_y_r,
-                topology, exp, False, 0)
+                topology, exp, False, 0, diff_lock_ratio)
 
             f_z_tot = f_z_fl + f_z_fr + f_z_rl + f_z_rr
             f_x_drag = _air_res(vel_mid, False, rho_air, c_w_a, 0.0) + _roll_res(f_z_tot, f_roll)
