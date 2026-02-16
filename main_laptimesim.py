@@ -435,7 +435,7 @@ if __name__ == "__main__":
         "trackname": "Shanghai",
         "flip_track": False,
         "mu_weather": 1.0,
-        "interp_stepsize_des": 5.0,
+        "interp_stepsize_des": 1.0,
         "curv_filt_width": 10.0,
         "use_drs1": True,
         "use_drs2": True,

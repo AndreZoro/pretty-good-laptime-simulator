@@ -544,11 +544,8 @@ class Lap(object):
                     f_y_r=f_y_r,
                 )
 
-                # approximate current a_x for tire load calc. either based on previous iteration or based on a_x_max
-                if a_x > 0.0:
-                    a_x = min(a_x, a_x_max)
-                else:  # a_x not usable if previous point was in deceleration phase
-                    a_x = a_x_max
+                # use maximum longitudinal acceleration as initial estimate (no carry-over from previous step)
+                a_x = a_x_max
 
                 # recalculate tire force potentials based on approximated a_x
                 (
@@ -605,13 +602,32 @@ class Lap(object):
                 )
 
                 # calculate reached longitudinal acceleration (e_i accounts for rotational inertia)
-                a_x = (
+                a_x_start = (
                     f_x_powert
                     - carobj.air_res(vel=vel_cl[i], drs=drs[i])
                     - carobj.roll_res(f_z_tot=tire_loads[i].sum())
                 ) / (pars_general_m * pars_gearbox_e_i[gear_cl[i]])
 
-                # calculate velocity in the next point
+                # --- Heun's method: lightweight predictor-corrector ---
+                # predictor: Euler step using a_x at start of interval
+                v_pred = math.sqrt(
+                    vel_cl[i] * vel_cl[i] + 2 * a_x_start * stepsize
+                )
+
+                # corrector: re-evaluate only aero/rolling resistance at predicted speed
+                # (skip expensive powertrain re-evaluation — use same f_x_powert)
+                if i + 1 < no_points:
+                    a_x_end = (
+                        f_x_powert
+                        - carobj.air_res(vel=v_pred, drs=drs[i])
+                        - carobj.roll_res(f_z_tot=tire_loads[i].sum())
+                    ) / (pars_general_m * pars_gearbox_e_i[gear_cl[i]])
+
+                    a_x = 0.5 * (a_x_start + a_x_end)
+                else:
+                    a_x = a_x_start
+
+                # calculate velocity in the next point using corrected acceleration
                 vel_cl[i + 1] = math.sqrt(
                     vel_cl[i] * vel_cl[i] + 2 * a_x * stepsize
                 )
@@ -800,10 +816,6 @@ class Lap(object):
 
                         # calculate applied velocity as average of all to get a robust convergence characteristic
                         vel_tmp = vel_sum / vel_count
-
-                        # start forcing the algorithm to converge after 10 iterations by reducing the temporary velocity
-                        # if counter > 10:
-                        #     vel_tmp -= (counter - 10) * force_conv
 
                     # check if the calculated velocity is greater than the original one -> break the loop
                     if vel_tmp >= vel_cl[i - j - 1]:
