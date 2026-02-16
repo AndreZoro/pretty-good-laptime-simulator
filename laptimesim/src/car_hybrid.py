@@ -137,10 +137,37 @@ class CarHybrid(Car):
 
         return float(self.__power_engine(n=n)) / (2 * math.pi * n)
 
-    def torque_e_motor(self, n: float) -> float:
+    def pow_e_motor_max(self, vel: float, override: bool = False) -> float:
+        """Velocity in m/s. Returns max ERS-K deploy power in W per C5.2.8."""
+        v_kph = vel * 3.6
+        p_max = self.pars_engine["pow_e_motor"]  # absolute cap (350 kW)
+
+        if not override:
+            # Normal mode (C5.2.8.i)
+            if v_kph < 340.0:
+                p_limit = (1800.0 - 5.0 * v_kph) * 1e3
+            elif v_kph < 345.0:
+                p_limit = (6900.0 - 20.0 * v_kph) * 1e3
+            else:
+                p_limit = 0.0
+        else:
+            # Override mode (C5.2.8.ii)
+            if v_kph < 355.0:
+                p_limit = (7100.0 - 20.0 * v_kph) * 1e3
+            else:
+                p_limit = 0.0
+
+        return max(0.0, min(p_max, p_limit))
+
+    def torque_e_motor(self, n: float, vel: float = None) -> float:
         """Rev input in 1/s. Output is the maximum torque in Nm."""
 
-        torque_tmp = self.pars_engine["pow_e_motor"] / (2 * math.pi * n)
+        if vel is not None and self.pars_engine.get("ers_speed_limit", False):
+            pow_avail = self.pow_e_motor_max(vel)
+        else:
+            pow_avail = self.pars_engine["pow_e_motor"]
+
+        torque_tmp = pow_avail / (2 * math.pi * n)
 
         if torque_tmp > self.pars_engine["torque_e_motor_max"]:
             torque_tmp = self.pars_engine["torque_e_motor_max"]
@@ -194,7 +221,7 @@ class CarHybrid(Car):
 
         # get torque potential of engine and e motor
         eng_torque_max = self.torque(n=n)
-        e_motor_torque_max = self.torque_e_motor(n=n)
+        e_motor_torque_max = self.torque_e_motor(n=n, vel=vel)
 
         if m_requ <= eng_torque_max:  # ICE only
             m_eng = throttle_pos * m_requ

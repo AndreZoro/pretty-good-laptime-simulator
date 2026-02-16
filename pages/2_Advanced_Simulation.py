@@ -4,14 +4,14 @@ Advanced Simulation Page
 Full control over all simulation parameters.
 """
 
-import streamlit as st
 import numpy as np
+import streamlit as st
 
 from helpers.simulation import (
-    run_simulation_advanced,
+    SERIES_CONFIG,
     get_available_tracks,
     get_available_vehicles,
-    SERIES_CONFIG,
+    run_simulation_advanced,
 )
 from helpers.visualization import render_simulation_plots
 
@@ -93,7 +93,9 @@ default_vehicle = SERIES_CONFIG[series]["vehicle"]
 vehicle = st.sidebar.selectbox(
     "Vehicle Configuration",
     options=available_vehicles,
-    index=available_vehicles.index(default_vehicle) if default_vehicle in available_vehicles else 0,
+    index=available_vehicles.index(default_vehicle)
+    if default_vehicle in available_vehicles
+    else 0,
 )
 
 # Custom vehicle parameters
@@ -105,96 +107,196 @@ if vehicle == "Custom":
     if series == "F1":
         defaults = {
             "powertrain_type": "hybrid",
-            "m": 733.0, "lf": 1.968, "lr": 1.632, "h_cog": 0.335,
-            "sf": 1.6, "sr": 1.6, "f_roll": 0.03,
-            "c_w_a": 1.56, "c_z_a_f": 2.20, "c_z_a_r": 2.68,
+            "m": 733.0,
+            "lf": 1.968,
+            "lr": 1.632,
+            "h_cog": 0.335,
+            "sf": 1.6,
+            "sr": 1.6,
+            "f_roll": 0.03,
+            "c_w_a": 1.56,
+            "c_z_a_f": 2.20,
+            "c_z_a_r": 2.68,
             "drs_factor": 0.17,
-            "pow_max": 575.0, "pow_diff": 41.0,
-            "n_begin": 10500.0, "n_max": 11400.0, "n_end": 12200.0,
-            "be_max": 100.0, "pow_e_motor": 120.0,
-            "eta_e_motor": 0.9, "eta_e_motor_re": 0.15, "eta_etc_re": 0.10,
-            "vel_min_e_motor": 100.0, "torque_e_motor_max": 200.0,
-            "tire_mux_f": 1.65, "tire_muy_f": 1.85,
-            "tire_mux_r": 1.95, "tire_muy_r": 2.15,
+            "pow_max": 575.0,
+            "pow_diff": 41.0,
+            "n_begin": 10500.0,
+            "n_max": 11400.0,
+            "n_end": 12200.0,
+            "be_max": 100.0,
+            "pow_e_motor": 120.0,
+            "eta_e_motor": 0.9,
+            "eta_e_motor_re": 0.15,
+            "eta_etc_re": 0.10,
+            "vel_min_e_motor": 100.0,
+            "torque_e_motor_max": 200.0,
+            "tire_mux_f": 1.65,
+            "tire_muy_f": 1.85,
+            "tire_mux_r": 1.95,
+            "tire_muy_r": 2.15,
         }
     else:  # FE
         defaults = {
             "powertrain_type": "electric",
-            "m": 880.0, "lf": 1.906, "lr": 1.194, "h_cog": 0.345,
-            "sf": 1.3, "sr": 1.3, "f_roll": 0.02,
-            "c_w_a": 1.15, "c_z_a_f": 1.24, "c_z_a_r": 1.52,
+            "m": 880.0,
+            "lf": 1.906,
+            "lr": 1.194,
+            "h_cog": 0.345,
+            "sf": 1.3,
+            "sr": 1.3,
+            "f_roll": 0.02,
+            "c_w_a": 1.15,
+            "c_z_a_f": 1.24,
+            "c_z_a_r": 1.52,
             "drs_factor": 0.0,
             "pow_e_motor": 200.0,
-            "eta_e_motor": 0.9, "eta_e_motor_re": 0.9,
+            "eta_e_motor": 0.9,
+            "eta_e_motor_re": 0.9,
             "torque_e_motor_max": 150.0,
-            "tire_mux_f": 1.22, "tire_muy_f": 1.22,
-            "tire_mux_r": 1.42, "tire_muy_r": 1.42,
+            "tire_mux_f": 1.22,
+            "tire_muy_f": 1.22,
+            "tire_mux_r": 1.42,
+            "tire_muy_r": 1.42,
         }
 
     with st.sidebar.expander("General Parameters", expanded=True):
         veh_mass = st.number_input("Mass [kg]", value=defaults["m"], step=10.0)
         col1, col2 = st.columns(2)
         with col1:
-            veh_lf = st.number_input("Front axle to CoG [m]", value=defaults["lf"], step=0.1, format="%.3f")
-            veh_sf = st.number_input("Track width front [m]", value=defaults["sf"], step=0.1)
+            veh_lf = st.number_input(
+                "Front axle to CoG [m]", value=defaults["lf"], step=0.1, format="%.3f"
+            )
+            veh_sf = st.number_input(
+                "Track width front [m]", value=defaults["sf"], step=0.1
+            )
         with col2:
-            veh_lr = st.number_input("Rear axle to CoG [m]", value=defaults["lr"], step=0.1, format="%.3f")
-            veh_sr = st.number_input("Track width rear [m]", value=defaults["sr"], step=0.1)
-        veh_h_cog = st.number_input("CoG height [m]", value=defaults["h_cog"], step=0.01, format="%.3f")
-        veh_f_roll = st.number_input("Rolling resistance [-]", value=defaults["f_roll"], step=0.005, format="%.3f")
+            veh_lr = st.number_input(
+                "Rear axle to CoG [m]", value=defaults["lr"], step=0.1, format="%.3f"
+            )
+            veh_sr = st.number_input(
+                "Track width rear [m]", value=defaults["sr"], step=0.1
+            )
+        veh_h_cog = st.number_input(
+            "CoG height [m]", value=defaults["h_cog"], step=0.01, format="%.3f"
+        )
+        veh_f_roll = st.number_input(
+            "Rolling resistance [-]",
+            value=defaults["f_roll"],
+            step=0.005,
+            format="%.3f",
+        )
 
     with st.sidebar.expander("Aerodynamics"):
-        veh_c_w_a = st.number_input("Drag coeff × area [m²]", value=defaults["c_w_a"], step=0.1)
-        veh_c_z_a_f = st.number_input("Front downforce coeff × area [m²]", value=defaults["c_z_a_f"], step=0.1)
-        veh_c_z_a_r = st.number_input("Rear downforce coeff × area [m²]", value=defaults["c_z_a_r"], step=0.1)
-        veh_drs_factor = st.number_input("DRS factor [-]", value=defaults["drs_factor"], step=0.01, format="%.2f")
+        veh_c_w_a = st.number_input(
+            "Drag coeff × area [m²]", value=defaults["c_w_a"], step=0.1
+        )
+        veh_c_z_a_f = st.number_input(
+            "Front downforce coeff × area [m²]", value=defaults["c_z_a_f"], step=0.1
+        )
+        veh_c_z_a_r = st.number_input(
+            "Rear downforce coeff × area [m²]", value=defaults["c_z_a_r"], step=0.1
+        )
+        veh_drs_factor = st.number_input(
+            "DRS factor [-]", value=defaults["drs_factor"], step=0.01, format="%.2f"
+        )
 
     with st.sidebar.expander("Powertrain"):
         if series == "F1":
-            veh_pow_max = st.number_input("Max engine power [kW]", value=defaults["pow_max"], step=10.0)
-            veh_pow_diff = st.number_input("Power drop from max [kW]", value=defaults["pow_diff"], step=5.0)
+            veh_pow_max = st.number_input(
+                "Max engine power [kW]", value=defaults["pow_max"], step=10.0
+            )
+            veh_pow_diff = st.number_input(
+                "Power drop from max [kW]", value=defaults["pow_diff"], step=5.0
+            )
             col1, col2, col3 = st.columns(3)
             with col1:
-                veh_n_begin = st.number_input("RPM begin", value=defaults["n_begin"], step=100.0)
+                veh_n_begin = st.number_input(
+                    "RPM begin", value=defaults["n_begin"], step=100.0
+                )
             with col2:
-                veh_n_max = st.number_input("RPM max", value=defaults["n_max"], step=100.0)
+                veh_n_max = st.number_input(
+                    "RPM max", value=defaults["n_max"], step=100.0
+                )
             with col3:
-                veh_n_end = st.number_input("RPM end", value=defaults["n_end"], step=100.0)
-            veh_be_max = st.number_input("Fuel consumption [kg/h]", value=defaults["be_max"], step=5.0)
+                veh_n_end = st.number_input(
+                    "RPM end", value=defaults["n_end"], step=100.0
+                )
+            veh_be_max = st.number_input(
+                "Fuel consumption [kg/h]", value=defaults["be_max"], step=5.0
+            )
 
-        veh_pow_e_motor = st.number_input("E-motor power [kW]", value=defaults["pow_e_motor"], step=10.0)
-        veh_eta_e_motor = st.number_input("E-motor efficiency (drive) [-]", value=defaults["eta_e_motor"], step=0.05, format="%.2f")
-        veh_eta_e_motor_re = st.number_input("E-motor efficiency (regen) [-]", value=defaults["eta_e_motor_re"], step=0.05, format="%.2f")
-        veh_torque_e_motor_max = st.number_input("E-motor max torque [Nm]", value=defaults["torque_e_motor_max"], step=10.0)
+        veh_pow_e_motor = st.number_input(
+            "E-motor power [kW]", value=defaults["pow_e_motor"], step=10.0
+        )
+        veh_eta_e_motor = st.number_input(
+            "E-motor efficiency (drive) [-]",
+            value=defaults["eta_e_motor"],
+            step=0.05,
+            format="%.2f",
+        )
+        veh_eta_e_motor_re = st.number_input(
+            "E-motor efficiency (regen) [-]",
+            value=defaults["eta_e_motor_re"],
+            step=0.05,
+            format="%.2f",
+        )
+        veh_torque_e_motor_max = st.number_input(
+            "E-motor max torque [Nm]", value=defaults["torque_e_motor_max"], step=10.0
+        )
 
         if series == "F1":
-            veh_eta_etc_re = st.number_input("Turbo regen efficiency [-]", value=defaults["eta_etc_re"], step=0.05, format="%.2f")
-            veh_vel_min_e_motor = st.number_input("Min velocity for e-motor [km/h]", value=defaults["vel_min_e_motor"], step=10.0)
+            veh_eta_etc_re = st.number_input(
+                "Turbo regen efficiency [-]",
+                value=defaults["eta_etc_re"],
+                step=0.05,
+                format="%.2f",
+            )
+            veh_vel_min_e_motor = st.number_input(
+                "Min velocity for e-motor [km/h]",
+                value=defaults["vel_min_e_motor"],
+                step=10.0,
+            )
 
     with st.sidebar.expander("Tires"):
         st.write("**Front Tires**")
         col1, col2 = st.columns(2)
         with col1:
-            tire_mux_f = st.number_input("μx front [-]", value=defaults["tire_mux_f"], step=0.05, format="%.2f")
+            tire_mux_f = st.number_input(
+                "μx front [-]", value=defaults["tire_mux_f"], step=0.05, format="%.2f"
+            )
         with col2:
-            tire_muy_f = st.number_input("μy front [-]", value=defaults["tire_muy_f"], step=0.05, format="%.2f")
+            tire_muy_f = st.number_input(
+                "μy front [-]", value=defaults["tire_muy_f"], step=0.05, format="%.2f"
+            )
 
         st.write("**Rear Tires**")
         col1, col2 = st.columns(2)
         with col1:
-            tire_mux_r = st.number_input("μx rear [-]", value=defaults["tire_mux_r"], step=0.05, format="%.2f")
+            tire_mux_r = st.number_input(
+                "μx rear [-]", value=defaults["tire_mux_r"], step=0.05, format="%.2f"
+            )
         with col2:
-            tire_muy_r = st.number_input("μy rear [-]", value=defaults["tire_muy_r"], step=0.05, format="%.2f")
+            tire_muy_r = st.number_input(
+                "μy rear [-]", value=defaults["tire_muy_r"], step=0.05, format="%.2f"
+            )
 
     # Build custom vehicle parameters dict
     custom_vehicle_pars = {
         "powertrain_type": defaults["powertrain_type"],
         "general": {
-            "lf": veh_lf, "lr": veh_lr, "h_cog": veh_h_cog,
-            "sf": veh_sf, "sr": veh_sr, "m": veh_mass,
-            "f_roll": veh_f_roll, "c_w_a": veh_c_w_a,
-            "c_z_a_f": veh_c_z_a_f, "c_z_a_r": veh_c_z_a_r,
-            "g": 9.81, "rho_air": 1.18, "drs_factor": veh_drs_factor,
+            "lf": veh_lf,
+            "lr": veh_lr,
+            "h_cog": veh_h_cog,
+            "sf": veh_sf,
+            "sr": veh_sr,
+            "m": veh_mass,
+            "f_roll": veh_f_roll,
+            "c_w_a": veh_c_w_a,
+            "c_z_a_f": veh_c_z_a_f,
+            "c_z_a_r": veh_c_z_a_r,
+            "g": 9.81,
+            "rho_air": 1.18,
+            "drs_factor": veh_drs_factor,
         },
         "engine": {
             "topology": "RWD",
@@ -204,30 +306,61 @@ if vehicle == "Custom":
             "torque_e_motor_max": veh_torque_e_motor_max,
         },
         "gearbox": {
-            "i_trans": [0.056, 0.091] if series == "FE" else [0.04, 0.070, 0.095, 0.117, 0.143, 0.172, 0.190, 0.206],
-            "n_shift": [19000.0, 19000.0] if series == "FE" else [10000.0, 11800.0, 11800.0, 11800.0, 11800.0, 11800.0, 11800.0, 13000.0],
-            "e_i": [1.04, 1.04] if series == "FE" else [1.16, 1.11, 1.09, 1.08, 1.08, 1.08, 1.07, 1.07],
+            "i_trans": [0.056, 0.091]
+            if series == "FE"
+            else [0.04, 0.070, 0.095, 0.117, 0.143, 0.172, 0.190, 0.206],
+            "n_shift": [19000.0, 19000.0]
+            if series == "FE"
+            else [
+                10000.0,
+                11800.0,
+                11800.0,
+                11800.0,
+                11800.0,
+                11800.0,
+                11800.0,
+                13000.0,
+            ],
+            "e_i": [1.04, 1.04]
+            if series == "FE"
+            else [1.16, 1.11, 1.09, 1.08, 1.08, 1.08, 1.07, 1.07],
             "eta_g": 0.96,
         },
         "tires": {
-            "f": {"circ_ref": 2.073, "fz_0": 3000.0, "mux": tire_mux_f, "muy": tire_muy_f, "dmux_dfz": -5.0e-5, "dmuy_dfz": -5.0e-5},
-            "r": {"circ_ref": 2.073, "fz_0": 3000.0, "mux": tire_mux_r, "muy": tire_muy_r, "dmux_dfz": -5.0e-5, "dmuy_dfz": -5.0e-5},
+            "f": {
+                "circ_ref": 2.073,
+                "fz_0": 3000.0,
+                "mux": tire_mux_f,
+                "muy": tire_muy_f,
+                "dmux_dfz": -5.0e-5,
+                "dmuy_dfz": -5.0e-5,
+            },
+            "r": {
+                "circ_ref": 2.073,
+                "fz_0": 3000.0,
+                "mux": tire_mux_r,
+                "muy": tire_muy_r,
+                "dmux_dfz": -5.0e-5,
+                "dmuy_dfz": -5.0e-5,
+            },
             "tire_model_exp": 2.0,
         },
     }
 
     # Add F1-specific engine parameters
     if series == "F1":
-        custom_vehicle_pars["engine"].update({
-            "pow_max": veh_pow_max * 1e3,
-            "pow_diff": veh_pow_diff * 1e3,
-            "n_begin": veh_n_begin,
-            "n_max": veh_n_max,
-            "n_end": veh_n_end,
-            "be_max": veh_be_max,
-            "eta_etc_re": veh_eta_etc_re,
-            "vel_min_e_motor": veh_vel_min_e_motor / 3.6,
-        })
+        custom_vehicle_pars["engine"].update(
+            {
+                "pow_max": veh_pow_max * 1e3,
+                "pow_diff": veh_pow_diff * 1e3,
+                "n_begin": veh_n_begin,
+                "n_max": veh_n_max,
+                "n_end": veh_n_end,
+                "be_max": veh_be_max,
+                "eta_etc_re": veh_eta_etc_re,
+                "vel_min_e_motor": veh_vel_min_e_motor / 3.6,
+            }
+        )
 
 with st.sidebar.expander("DRS Options"):
     use_drs1 = st.checkbox("Enable DRS Zone 1", value=(series == "F1"))
@@ -276,7 +409,7 @@ st.sidebar.subheader("Driver & Strategy")
 
 em_strategy = st.sidebar.selectbox(
     "Energy Management Strategy",
-    options=["FCFB", "LBP", "LS", "NONE"],
+    options=["FCFB", "LBP", "LS", "ERSO", "NONE"],
     index=0,
     help="FCFB=First Come First Boost, LBP=Longest to Breakpoint, LS=Lowest Speed",
 )
@@ -337,7 +470,9 @@ with st.sidebar.expander("Yellow Flags"):
 # RUN BUTTON
 # =============================================================================
 st.sidebar.divider()
-run_button = st.sidebar.button("🚀 Run Simulation", type="primary", use_container_width=True)
+run_button = st.sidebar.button(
+    "🚀 Run Simulation", type="primary", use_container_width=True
+)
 
 # =============================================================================
 # BUILD OPTIONS DICTS AND RUN
@@ -438,7 +573,9 @@ if st.session_state.adv_result is not None:
 
 else:
     # Initial state
-    st.info("👈 Configure parameters in the sidebar and click **Run Simulation** to start.")
+    st.info(
+        "👈 Configure parameters in the sidebar and click **Run Simulation** to start."
+    )
     st.markdown("""
     ### Advanced Options
 

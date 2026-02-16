@@ -168,7 +168,7 @@ def main(
     if solver_opts.get("custom_vehicle_pars") is not None:
         # Use custom vehicle parameters
         pars_veh = solver_opts["custom_vehicle_pars"]
-        if solver_opts["series"] == "F1":
+        if solver_opts["series"] in ("F1", "F1_2026"):
             car = laptimesim.src.car_hybrid.CarHybrid(pars_veh=pars_veh)
         elif solver_opts["series"] == "FE":
             car = laptimesim.src.car_electric.CarElectric(pars_veh=pars_veh)
@@ -182,7 +182,7 @@ def main(
         parfilepath = os.path.join(
             repo_path, "laptimesim", "input", "vehicles", vehicle_filename
         )
-        if solver_opts["series"] == "F1":
+        if solver_opts["series"] in ("F1", "F1_2026"):
             car = laptimesim.src.car_hybrid.CarHybrid(parfilepath=parfilepath)
         elif solver_opts["series"] == "FE":
             car = laptimesim.src.car_electric.CarElectric(parfilepath=parfilepath)
@@ -444,7 +444,7 @@ if __name__ == "__main__":
 
     # solver options ---------------------------------------------------------------------------------------------------
     # vehicle:                  vehicle parameter file
-    # series:                   F1, FE
+    # series:                   F1, F1_2026, FE
     # limit_braking_weak_side:  can be None, 'FA', 'RA', 'all' -> set if brake force potential should be determined
     #                           based on the weak (i.e. inner) side of the car, e.g. when braking into a corner
     # v_start:                  [m/s] velocity at start
@@ -473,8 +473,10 @@ if __name__ == "__main__":
     # yellow_s3:        yellow flag in sector 3
     # yellow_throttle:  throttle position in a yellow flag sector
     # initial_energy:   [J] initial energy (F1: max. 4 MJ/lap, FE Berlin: 4.58 MJ/lap)
-    # em_strategy:      FCFB, LBP, LS, NONE -> FCFB = First Come First Boost, LBP = Longest (time) to Breakpoint,
-    #                   LS = Lowest Speed, FE requires FCFB as it only drives in electric mode!
+    # em_strategy:      FCFB, LBP, LS, ERSO, NONE -> FCFB = First Come First Boost, LBP = Longest (time) to
+    #                   Breakpoint, LS = Lowest Speed, ERSO = ERS-Optimized (ranks by available ERS power / velocity,
+    #                   best for F1_2026 with speed-dependent power limit), FE requires FCFB as it only drives in
+    #                   electric mode!
     # use_recuperation: set if recuperation by e-motor and electric turbocharger is allowed or not (lift&coast is
     #                   currently only considered with FCFB)
     # use_lift_coast:   switch to turn lift and coast on/off

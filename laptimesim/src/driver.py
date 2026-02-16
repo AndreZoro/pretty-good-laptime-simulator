@@ -47,7 +47,7 @@ class Driver(object):
         # set initial energy management strategy -> em_boost_use contains where e_motor boost can be applied
         if self.pars_driver["em_strategy"] == "FCFB":
             self.em_boost_use = np.full(trackobj.no_points, True)
-        elif self.pars_driver["em_strategy"] in ["LBP", "LS", "NONE"]:
+        elif self.pars_driver["em_strategy"] in ["LBP", "LS", "ERSO", "NONE"]:
             self.em_boost_use = np.full(trackobj.no_points, False)
         else:
             raise IOError("Unknown energy management strategy!")
@@ -103,7 +103,7 @@ class Driver(object):
 
         if self.pars_driver["em_strategy"] == "FCFB":
             self.em_boost_use = np.full(trackobj.no_points, True)
-        elif self.pars_driver["em_strategy"] in ["LBP", "LS", "NONE"]:
+        elif self.pars_driver["em_strategy"] in ["LBP", "LS", "ERSO", "NONE"]:
             self.em_boost_use = np.full(trackobj.no_points, False)
         else:
             raise IOError("Unknown energy management strategy!")
@@ -138,6 +138,13 @@ class Driver(object):
                                n_cl=n_cl,
                                m_requ=m_requ,
                                es_final=es_final)
+
+        elif self.pars_driver["em_strategy"] == "ERSO":
+            self.__strategy_erso(t_cl=t_cl,
+                                 vel_cl=vel_cl,
+                                 n_cl=n_cl,
+                                 m_requ=m_requ,
+                                 es_final=es_final)
 
         elif self.pars_driver["em_strategy"] == "FCFB" and self.pars_driver["use_lift_coast"]:
             # set array where throttle is 0.0 when driving in lift and coast condition
@@ -226,6 +233,55 @@ class Driver(object):
             # apply boost if boost was not applied here so far
             if not self.em_boost_use[ind_cur]:
                 # apply boost here
+                self.em_boost_use[ind_cur] = True
+
+                # calculate torque distribution within the hybrid system
+                m_e_motor = self.carobj.calc_torque_distr(n=n_cl[ind_cur],
+                                                          m_requ=m_requ[ind_cur],
+                                                          throttle_pos=self.throttle_pos[ind_cur],
+                                                          es=np.inf,
+                                                          em_boost_use=True,
+                                                          vel=vel_cl[ind_cur])[1]
+
+                # update energy store status (approximation because velocity profile is influenced obviously)
+                es_final -= (self.carobj.power_demand_e_motor_drive(n=n_cl[ind_cur],
+                                                                    m_e_motor=np.array(m_e_motor))
+                             * (t_cl[ind_cur + 1] - t_cl[ind_cur]))
+
+    def __strategy_erso(self, t_cl: np.ndarray, vel_cl: np.ndarray, n_cl: np.ndarray, m_requ: np.ndarray,
+                        es_final: float):
+        """erso = ERS-optimized. Ranks deployment points by available ERS power / velocity, which is proportional to
+        the acceleration force per watt. This naturally favors corner exits (full ERS power, low speed) over straights
+        (curtailed power, high speed). For cars without ers_speed_limit, degenerates to LS behavior."""
+
+        # input check: energy store
+        if es_final < 0.0:
+            print("WARNING: ES charge state already negative when entering EM strategy calculation!")
+
+        no_points = t_cl.size - 1
+
+        # compute efficiency score for each point: available ERS power / velocity
+        if hasattr(self.carobj, 'pow_e_motor_max') and self.carobj.pars_engine.get("ers_speed_limit", False):
+            score = np.array([self.carobj.pow_e_motor_max(vel_cl[i]) / max(vel_cl[i], 1.0)
+                              for i in range(no_points)])
+        else:
+            # fallback: use constant power, degenerates to LS (1/vel ranking)
+            pow_e = self.carobj.pars_engine["pow_e_motor"]
+            score = pow_e / np.maximum(vel_cl[:no_points], 1.0)
+
+        # sort by score descending (highest efficiency first)
+        inds_sorted = np.argsort(-score)
+        sorted_idx = 0
+
+        while es_final > 0.0 and sorted_idx < len(inds_sorted):
+            ind_cur = inds_sorted[sorted_idx]
+            sorted_idx += 1
+
+            # skip points with zero score (no ERS power available at this speed)
+            if score[ind_cur] <= 0.0:
+                break
+
+            if not self.em_boost_use[ind_cur]:
                 self.em_boost_use[ind_cur] = True
 
                 # calculate torque distribution within the hybrid system

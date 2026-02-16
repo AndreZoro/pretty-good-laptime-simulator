@@ -112,6 +112,11 @@ class Lap(object):
             self.e_es_to_e_motor_max = (
                 4e6  # [J] F1: 4 MJ/lap  -> currently not considered!
             )
+        elif self.pars_solver["series"] == "F1_2026":
+            self.e_rec_e_motor_max = 8.5e6  # [J] F1 2026: 8.5 MJ/lap
+            self.e_es_to_e_motor_max = (
+                4e6  # [J] F1 2026: 4 MJ/lap delta SoC -> currently not considered!
+            )
         else:
             self.e_rec_e_motor_max = np.inf
             self.e_es_to_e_motor_max = np.inf
@@ -297,6 +302,8 @@ class Lap(object):
 
         if self.pars_solver["series"] == "F1":
             self.e_rec_e_motor_max = 2e6  # F1: 2 MJ/lap
+        elif self.pars_solver["series"] == "F1_2026":
+            self.e_rec_e_motor_max = 8.5e6  # F1 2026: 8.5 MJ/lap
         else:
             self.e_rec_e_motor_max = np.inf
 
@@ -351,7 +358,7 @@ class Lap(object):
         # --------------------------------------------------------------------------------------------------------------
 
         # recalculation only required if EM strategy is not "pure FCFB"
-        if self.driverobj.pars_driver["em_strategy"] in ["LBP", "LS"]:
+        if self.driverobj.pars_driver["em_strategy"] in ["LBP", "LS", "ERSO"]:
             """Due to the mutual influence between velocity profile and EM strategy we need some iterations until an
             equilibrium was found."""
 
@@ -1000,7 +1007,7 @@ class Lap(object):
 
     def plot_lat_acc(self):
         a_y_tmp = np.power(self.vel_cl[:-1], 2) * self.trackobj.kappa
-        if self.pars_solver["series"] == "F1":
+        if self.pars_solver["series"] in ("F1", "F1_2026"):
             a_y_valid = 50.0
         else:
             a_y_valid = 30.0
@@ -1042,7 +1049,7 @@ class Lap(object):
             * self.driverobj.carobj.pars_general["m"]
             * self.driverobj.carobj.pars_general["g"]
         )
-        if self.pars_solver["series"] == "F1":
+        if self.pars_solver["series"] in ("F1", "F1_2026"):
             f_z_dyn_valid = f_z_stat_avg * 5.0
             legend_text = "5 * avg. static"
         else:
@@ -1089,7 +1096,7 @@ class Lap(object):
         f_x_aero = 0.5 * c_w_a * rho_air * np.power(self.vel_cl[:-1], 2)
         f_z_aero = 0.5 * (c_z_a_f + c_z_a_r) * rho_air * np.power(self.vel_cl[:-1], 2)
 
-        if self.pars_solver["series"] == "F1":
+        if self.pars_solver["series"] in ("F1", "F1_2026"):
             f_z_aero_valid = 18e3
         else:
             f_z_aero_valid = 6e3
