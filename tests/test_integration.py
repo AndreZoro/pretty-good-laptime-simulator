@@ -29,7 +29,6 @@ def get_default_opts():
     }
     solver_opts = {
         "vehicle": "F1_Shanghai.ini",
-        "series": "F1",
         "limit_braking_weak_side": "FA",
         "v_start": 100.0 / 3.6,
         "find_v_start": True,

@@ -34,7 +34,7 @@ else:
         col1, col2 = st.sidebar.columns([3, 1])
         with col1:
             st.markdown(
-                f"<span style='color:{COLORS[i]}'>●</span> **{run.track_name}** ({run.series})",
+                f"<span style='color:{COLORS[i]}'>●</span> **{run.track_name}** ({run.vehicle})",
                 unsafe_allow_html=True,
             )
             st.caption(f"{run.format_lap_time()} | {run.weather}")
@@ -73,7 +73,7 @@ elif len(st.session_state.saved_runs) == 1:
     st.warning("Add at least one more run to compare. You have 1 run saved.")
 
     run = st.session_state.saved_runs[0]
-    st.subheader(f"{run.track_name} ({run.series}) - {run.format_lap_time()}")
+    st.subheader(f"{run.track_name} ({run.vehicle}) - {run.format_lap_time()}")
 
 else:
     # We have 2 or 3 runs to compare
@@ -99,7 +99,7 @@ else:
                 f"### <span style='color:{COLORS[i]}'>●</span> {run.track_name}",
                 unsafe_allow_html=True,
             )
-            st.caption(f"{run.series} | {run.weather}")
+            st.caption(f"{run.vehicle} | {run.weather}")
             st.metric("Lap Time", run.format_lap_time(), delta_str if delta > 0 else None)
 
             # Sector times
@@ -128,7 +128,7 @@ else:
     }
 
     for i, run in enumerate(runs):
-        speed_data["Run"].append(f"{run.track_name} ({run.series})")
+        speed_data["Run"].append(f"{run.track_name} ({run.vehicle})")
         speed_data["Max Speed"].append(f"{np.max(run.velocity_kmh):.1f} km/h")
         speed_data["Min Speed"].append(f"{np.min(run.velocity_kmh):.1f} km/h")
         speed_data["Avg Speed"].append(f"{np.mean(run.velocity_kmh):.1f} km/h")
@@ -177,7 +177,7 @@ else:
         fig = go.Figure()
 
         for i, run in enumerate(runs):
-            label = f"{run.series} - {run.weather}"
+            label = f"{run.vehicle} - {run.weather}"
             fig.add_trace(go.Scatter(
                 x=run.distance,
                 y=run.velocity_kmh,
@@ -235,7 +235,7 @@ else:
             # Interpolate to match reference distance points
             delta = np.interp(ref_run.distance, run.distance, time_cumulative) - ref_time_cumulative
 
-            label = f"{run.series} - {run.weather} vs Fastest"
+            label = f"{run.vehicle} - {run.weather} vs Fastest"
             fig_delta.add_trace(go.Scatter(
                 x=ref_run.distance,
                 y=delta,

@@ -1,6 +1,6 @@
 import numpy as np
 import math
-import json
+import ast
 from laptimesim.src.car import Car
 import configparser
 
@@ -38,7 +38,7 @@ class CarElectric(Car):
             parser = configparser.ConfigParser()
             if not parser.read(parfilepath):
                 raise RuntimeError('Specified config file does not exist or is empty!')
-            pars_veh_tmp = json.loads(parser.get('VEH_PARS', 'veh_pars'))
+            pars_veh_tmp = ast.literal_eval(parser.get('VEH_PARS', 'veh_pars'))
         else:
             raise RuntimeError('Either parfilepath or pars_veh must be provided!')
 

@@ -7,8 +7,11 @@ Full control over all simulation parameters.
 import numpy as np
 import streamlit as st
 
+import configparser
+import ast
+import os
+
 from helpers.simulation import (
-    SERIES_CONFIG,
     get_available_tracks,
     get_available_vehicles,
     run_simulation_advanced,
@@ -82,29 +85,35 @@ with st.sidebar.expander("Track Processing"):
 # =============================================================================
 st.sidebar.subheader("Vehicle & Solver")
 
-series = st.sidebar.radio(
-    "Series",
-    options=["F1", "FE"],
-    horizontal=True,
-)
-
 available_vehicles = get_available_vehicles() + ["Custom"]
-default_vehicle = SERIES_CONFIG[series]["vehicle"]
 vehicle = st.sidebar.selectbox(
     "Vehicle Configuration",
     options=available_vehicles,
-    index=available_vehicles.index(default_vehicle)
-    if default_vehicle in available_vehicles
+    index=available_vehicles.index("F1_Shanghai")
+    if "F1_Shanghai" in available_vehicles
     else 0,
 )
+
+# Read powertrain_type from selected vehicle INI (needed for conditional UI)
+_powertrain_type = "hybrid"  # default for Custom
+if vehicle != "Custom":
+    _repo_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _ini_path = os.path.join(_repo_path, "laptimesim", "input", "vehicles", f"{vehicle}.ini")
+    _parser = configparser.ConfigParser()
+    _parser.read(_ini_path)
+    _veh_pars = ast.literal_eval(_parser.get("VEH_PARS", "veh_pars"))
+    _powertrain_type = _veh_pars["powertrain_type"]
 
 # Custom vehicle parameters
 custom_vehicle_pars = None
 if vehicle == "Custom":
     st.sidebar.info("Configure custom vehicle parameters below")
+    _powertrain_type = st.sidebar.radio(
+        "Powertrain Type", options=["hybrid", "electric"], horizontal=True
+    )
 
-    # Default values based on series
-    if series == "F1":
+    # Default values based on powertrain type
+    if _powertrain_type in ("hybrid", "combustion"):
         defaults = {
             "powertrain_type": "hybrid",
             "m": 733.0,
@@ -135,7 +144,7 @@ if vehicle == "Custom":
             "tire_mux_r": 1.95,
             "tire_muy_r": 2.15,
         }
-    else:  # FE
+    else:  # electric
         defaults = {
             "powertrain_type": "electric",
             "m": 880.0,
@@ -201,7 +210,7 @@ if vehicle == "Custom":
         )
 
     with st.sidebar.expander("Powertrain"):
-        if series == "F1":
+        if _powertrain_type in ("hybrid", "combustion"):
             veh_pow_max = st.number_input(
                 "Max engine power [kW]", value=defaults["pow_max"], step=10.0
             )
@@ -244,7 +253,7 @@ if vehicle == "Custom":
             "E-motor max torque [Nm]", value=defaults["torque_e_motor_max"], step=10.0
         )
 
-        if series == "F1":
+        if _powertrain_type in ("hybrid", "combustion"):
             veh_eta_etc_re = st.number_input(
                 "Turbo regen efficiency [-]",
                 value=defaults["eta_etc_re"],
@@ -307,10 +316,10 @@ if vehicle == "Custom":
         },
         "gearbox": {
             "i_trans": [0.056, 0.091]
-            if series == "FE"
+            if _powertrain_type == "electric"
             else [0.04, 0.070, 0.095, 0.117, 0.143, 0.172, 0.190, 0.206],
             "n_shift": [19000.0, 19000.0]
-            if series == "FE"
+            if _powertrain_type == "electric"
             else [
                 10000.0,
                 11800.0,
@@ -322,7 +331,7 @@ if vehicle == "Custom":
                 13000.0,
             ],
             "e_i": [1.04, 1.04]
-            if series == "FE"
+            if _powertrain_type == "electric"
             else [1.16, 1.11, 1.09, 1.08, 1.08, 1.08, 1.07, 1.07],
             "eta_g": 0.96,
         },
@@ -347,8 +356,8 @@ if vehicle == "Custom":
         },
     }
 
-    # Add F1-specific engine parameters
-    if series == "F1":
+    # Add hybrid-specific engine parameters
+    if _powertrain_type in ("hybrid", "combustion"):
         custom_vehicle_pars["engine"].update(
             {
                 "pow_max": veh_pow_max * 1e3,
@@ -363,8 +372,8 @@ if vehicle == "Custom":
         )
 
 with st.sidebar.expander("DRS Options"):
-    use_drs1 = st.checkbox("Enable DRS Zone 1", value=(series == "F1"))
-    use_drs2 = st.checkbox("Enable DRS Zone 2", value=(series == "F1"))
+    use_drs1 = st.checkbox("Enable DRS Zone 1", value=(_powertrain_type != "electric"))
+    use_drs2 = st.checkbox("Enable DRS Zone 2", value=(_powertrain_type != "electric"))
 
 use_pit = st.sidebar.checkbox("Use Pit Lane", value=False)
 
@@ -414,7 +423,8 @@ em_strategy = st.sidebar.selectbox(
     help="FCFB=First Come First Boost, LBP=Longest to Breakpoint, LS=Lowest Speed",
 )
 
-default_energy = SERIES_CONFIG[series]["initial_energy"]
+from helpers.simulation import VEHICLE_DEFAULTS, DEFAULT_VEHICLE
+default_energy = VEHICLE_DEFAULTS.get(vehicle, DEFAULT_VEHICLE)["initial_energy"]
 initial_energy_mj = st.sidebar.slider(
     "Initial Energy [MJ]",
     min_value=0.0,
@@ -491,7 +501,6 @@ if run_button:
 
     solver_opts = {
         "vehicle": vehicle if vehicle != "Custom" else None,
-        "series": series,
         "limit_braking_weak_side": limit_braking_val,
         "v_start": v_start_kmh / 3.6,
         "find_v_start": find_v_start,
@@ -515,11 +524,11 @@ if run_button:
         "lift_coast_dist": lift_coast_dist,
     }
 
-    with st.spinner(f"Simulating {series} lap at {track_name}..."):
+    with st.spinner(f"Simulating {vehicle} at {track_name}..."):
         try:
             result = run_simulation_advanced(track_opts, solver_opts, driver_opts)
             st.session_state.adv_result = result
-            st.success(f"Simulation completed for {track_name} ({series})")
+            st.success(f"Simulation completed for {track_name} ({vehicle})")
         except Exception as e:
             st.error(f"Simulation failed: {e}")
             st.exception(e)

@@ -5,7 +5,8 @@ from helpers.simulation import (
     run_simulation_advanced,
     get_available_tracks,
     get_available_vehicles,
-    SERIES_CONFIG,
+    VEHICLE_DEFAULTS,
+    DEFAULT_VEHICLE,
     SimulationResult,
 )
 from helpers.visualization import (

@@ -7,7 +7,7 @@ Basic lap time simulation with minimal configuration options.
 import streamlit as st
 import numpy as np
 
-from helpers.simulation import run_simulation, get_available_tracks, SERIES_CONFIG
+from helpers.simulation import run_simulation, get_available_tracks, get_available_vehicles
 from helpers.visualization import render_simulation_plots
 
 st.set_page_config(
@@ -37,12 +37,12 @@ track = st.sidebar.selectbox(
     index=available_tracks.index("Shanghai") if "Shanghai" in available_tracks else 0,
 )
 
-# Series selection
-series = st.sidebar.radio(
-    "Series",
-    options=["F1", "FE"],
-    horizontal=True,
-    help="F1 = Formula 1 (hybrid), FE = Formula E (electric)",
+# Vehicle selection
+available_vehicles = get_available_vehicles()
+vehicle = st.sidebar.selectbox(
+    "Vehicle",
+    options=available_vehicles,
+    index=available_vehicles.index("F1_Shanghai") if "F1_Shanghai" in available_vehicles else 0,
 )
 
 # Weather condition
@@ -65,15 +65,15 @@ run_button = st.sidebar.button("🚀 Run Simulation", type="primary", use_contai
 
 # Show current config
 st.sidebar.divider()
-st.sidebar.caption(f"Vehicle: `{SERIES_CONFIG[series]['vehicle']}`")
+st.sidebar.caption(f"Vehicle: `{vehicle}`")
 
 # Main area
 if run_button:
-    with st.spinner(f"Simulating {series} lap at {track}..."):
+    with st.spinner(f"Simulating {vehicle} at {track}..."):
         try:
-            result = run_simulation(track, series, mu_weather)
+            result = run_simulation(track, vehicle, mu_weather)
             st.session_state.simple_result = result
-            st.success(f"Simulation completed for {track} ({series})")
+            st.success(f"Simulation completed for {track} ({vehicle})")
         except Exception as e:
             st.error(f"Simulation failed: {e}")
             st.exception(e)
@@ -133,7 +133,7 @@ else:
         ### Quick Start
 
         1. **Select a track** from the dropdown
-        2. **Choose the series** (F1 for Formula 1, FE for Formula E)
+        2. **Choose a vehicle** configuration
         3. **Adjust weather** if desired (lower = more slippery)
         4. Click **Run Simulation**
         """)

@@ -6,7 +6,7 @@ Uses 4 targets (S1, S2, S3, v_max) to identify 4 parameters (drag, downforce, ma
 """
 
 import configparser
-import json
+import ast
 import os
 import time
 
@@ -72,10 +72,7 @@ def load_vehicle_config(vehicle_name: str) -> dict:
     parser = configparser.ConfigParser()
     if not parser.read(ini_path):
         raise RuntimeError(f"Vehicle config file not found: {ini_path}")
-    config = json.loads(parser.get("VEH_PARS", "veh_pars"))
-    # Infer series from powertrain type
-    if "series" not in config:
-        config["series"] = "FE" if config.get("powertrain_type") == "electric" else "F1"
+    config = ast.literal_eval(parser.get("VEH_PARS", "veh_pars"))
     return config
 
 
@@ -136,7 +133,6 @@ def run_sim_with_params(
 
     solver_opts = {
         "vehicle": None,
-        "series": base_config.get("series", "F1"),
         "limit_braking_weak_side": None,  # Skip weak side calculation
         "v_start": 100.0 / 3.6,
         "find_v_start": True,  # Re-run with end-of-lap velocity as start
@@ -1199,7 +1195,6 @@ if run_button:
     }
     final_solver_opts = {
         "vehicle": None,
-        "series": base_config.get("series", "F1"),
         "limit_braking_weak_side": "FA",
         "v_start": 100.0 / 3.6,
         "find_v_start": True,

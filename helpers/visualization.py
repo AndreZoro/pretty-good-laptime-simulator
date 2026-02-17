@@ -42,6 +42,10 @@ def get_viz_options(result: SimulationResult) -> dict:
         options["DRS"] = {"data": result.drs.astype(float), "unit": "", "colorscale": "Picnic"}
     if result.friction is not None:
         options["Friction"] = {"data": result.friction, "unit": "μ", "colorscale": "Greens"}
+    if result.e_motor_power is not None:
+        options["E-Motor Power"] = {"data": result.e_motor_power, "unit": "kW", "colorscale": "RdBu_r"}
+    if result.harvest_power is not None:
+        options["Harvest Power"] = {"data": result.harvest_power, "unit": "kW", "colorscale": "Reds"}
 
     return options
 

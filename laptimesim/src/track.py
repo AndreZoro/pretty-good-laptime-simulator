@@ -1,7 +1,7 @@
 import numpy as np
 import math
 import matplotlib.pyplot as plt
-import json
+import ast
 import trajectory_planning_helpers as tph
 import configparser
 
@@ -49,7 +49,7 @@ class Track(object):
         if not parser.read(parfilepath):
             raise RuntimeError('Specified config file does not exist or is empty!')
 
-        pars_track_tmp = json.loads(parser.get('TRACK_PARS', 'track_pars'))
+        pars_track_tmp = ast.literal_eval(parser.get('TRACK_PARS', 'track_pars'))
 
         self.pars_track.update(pars_track_tmp[self.pars_track["trackname"]])
 

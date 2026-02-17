@@ -39,19 +39,17 @@ def _compute_accelerations(velocity: np.ndarray, distance: np.ndarray, curvature
     return acceleration, lat_acceleration
 
 
-# Series-specific configuration
-SERIES_CONFIG = {
-    "F1": {
-        "vehicle": "F1_Shanghai",
-        "initial_energy": 4.0e6,  # 4 MJ
-        "use_drs": True,
-    },
-    "FE": {
-        "vehicle": "FE_Berlin",
-        "initial_energy": 4.58e6,  # 4.58 MJ
-        "use_drs": False,
-    },
+# Vehicle-specific defaults for the simple simulation page
+VEHICLE_DEFAULTS = {
+    "F1_Shanghai": {"initial_energy": 4.0e6, "use_drs": True},
+    "F1_2025": {"initial_energy": 4.0e6, "use_drs": True},
+    "F1_2025_f1technical_shifts": {"initial_energy": 4.0e6, "use_drs": True},
+    "F1_2025_optimized_shifts": {"initial_energy": 4.0e6, "use_drs": True},
+    "F1_2026": {"initial_energy": 4.0e6, "use_drs": True},
+    "MVRC_2026": {"initial_energy": 4.0e6, "use_drs": True},
+    "FE_Berlin": {"initial_energy": 4.58e6, "use_drs": False},
 }
+DEFAULT_VEHICLE = {"initial_energy": 4.0e6, "use_drs": True}
 
 
 @dataclass
@@ -81,7 +79,7 @@ class SimulationResult:
 
     # Metadata
     track_name: str
-    series: str
+    vehicle: str
     weather: str
 
     # Extended data (optional for backward compatibility)
@@ -95,6 +93,8 @@ class SimulationResult:
     drs: Optional[np.ndarray] = None  # DRS active flag
     time: Optional[np.ndarray] = None  # Cumulative time [s]
     friction: Optional[np.ndarray] = None  # Track friction coefficient
+    e_motor_power: Optional[np.ndarray] = None  # E-motor power [kW], negative = harvest
+    harvest_power: Optional[np.ndarray] = None  # Instantaneous harvest power [kW]
 
     def format_lap_time(self) -> str:
         """Format lap time as M:SS.mmm"""
@@ -149,7 +149,7 @@ def get_available_vehicles() -> list[str]:
 
 def run_simulation(
     track_name: str,
-    series: str,
+    vehicle: str,
     mu_weather: float = 1.0,
 ) -> SimulationResult:
     """
@@ -157,20 +157,20 @@ def run_simulation(
 
     Args:
         track_name: Name of the track (e.g., "Shanghai", "Monza")
-        series: Racing series ("F1" or "FE")
+        vehicle: Vehicle configuration name (e.g., "F1_Shanghai", "FE_Berlin")
         mu_weather: Weather friction factor (0.6=wet, 1.0=dry)
 
     Returns:
         SimulationResult with lap time, velocity profile, and track data
     """
-    config = SERIES_CONFIG[series]
+    config = VEHICLE_DEFAULTS.get(vehicle, DEFAULT_VEHICLE)
 
     # Build option dicts with sensible defaults
     track_opts = {
         "trackname": track_name,
         "flip_track": False,
         "mu_weather": mu_weather,
-        "interp_stepsize_des": 5.0,
+        "interp_stepsize_des": 1.0,
         "curv_filt_width": 10.0,
         "use_drs1": config["use_drs"],
         "use_drs2": config["use_drs"],
@@ -178,8 +178,7 @@ def run_simulation(
     }
 
     solver_opts = {
-        "vehicle": config["vehicle"],
-        "series": series,
+        "vehicle": vehicle,
         "limit_braking_weak_side": "FA",
         "v_start": 100.0 / 3.6,
         "find_v_start": True,
@@ -271,7 +270,7 @@ def run_simulation(
         energy_consumed=lap.e_cons_cl[-1] / 1000.0,
         fuel_consumed=lap.fuel_cons_cl[-1] if hasattr(lap, 'fuel_cons_cl') and lap.fuel_cons_cl is not None else None,
         track_name=track_name,
-        series=series,
+        vehicle=vehicle,
         weather=weather,
         rpm=lap.n_cl[:no_points] * 60,
         engine_torque=lap.m_eng[:no_points],
@@ -283,6 +282,8 @@ def run_simulation(
         drs=lap.trackobj.drs[:no_points],
         time=lap.t_cl[:no_points],
         friction=lap.trackobj.mu[:no_points],
+        e_motor_power=2 * np.pi * lap.n_cl[:no_points] * lap.m_e_motor[:no_points] / 1000.0,
+        harvest_power=lap.e_rec_e_motor[:no_points] / np.diff(lap.t_cl[:no_points + 1]) / 1000.0,
     )
 
 
@@ -371,7 +372,7 @@ def run_simulation_advanced(
         energy_consumed=lap.e_cons_cl[-1] / 1000.0,
         fuel_consumed=lap.fuel_cons_cl[-1] if hasattr(lap, 'fuel_cons_cl') and lap.fuel_cons_cl is not None else None,
         track_name=track_opts["trackname"],
-        series=solver_opts["series"],
+        vehicle=solver_opts.get("vehicle", "Custom"),
         weather=weather,
         rpm=lap.n_cl[:no_points] * 60,
         engine_torque=lap.m_eng[:no_points],
@@ -383,4 +384,6 @@ def run_simulation_advanced(
         drs=lap.trackobj.drs[:no_points],
         time=lap.t_cl[:no_points],
         friction=lap.trackobj.mu[:no_points],
+        e_motor_power=2 * np.pi * lap.n_cl[:no_points] * lap.m_e_motor[:no_points] / 1000.0,
+        harvest_power=lap.e_rec_e_motor[:no_points] / np.diff(lap.t_cl[:no_points + 1]) / 1000.0,
     )

@@ -143,7 +143,6 @@ def objective(x):
 
     solver_opts = {
         "vehicle": "F1_2025",
-        "series": "F1",
         "limit_braking_weak_side": "FA",
         "v_start": 100.0 / 3.6,
         "find_v_start": True,
@@ -224,7 +223,6 @@ if __name__ == "__main__":
     baseline_pars = copy.deepcopy(BASE_VEH_PARS)
     baseline_solver = {
         "vehicle": "F1_2025",
-        "series": "F1",
         "limit_braking_weak_side": "FA",
         "v_start": 100.0 / 3.6,
         "find_v_start": True,

@@ -1,6 +1,8 @@
 import laptimesim
 import time
 import os
+import ast
+import configparser
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle
@@ -102,13 +104,31 @@ def main(
             track_opts["trackname"] + "_pit.csv",
         )
 
+    # ------------------------------------------------------------------------------------------------------------------
+    # PEEK AT VEHICLE PARAMETERS (needed for velocity limit before track creation) -----------------------------------
+    # ------------------------------------------------------------------------------------------------------------------
+
+    if solver_opts.get("custom_vehicle_pars") is not None:
+        _veh_pars_peek = solver_opts["custom_vehicle_pars"]
+    else:
+        vehicle_filename = solver_opts["vehicle"]
+        if not vehicle_filename.endswith(".ini"):
+            vehicle_filename += ".ini"
+        parfilepath_veh = os.path.join(
+            repo_path, "laptimesim", "input", "vehicles", vehicle_filename
+        )
+        _parser = configparser.ConfigParser()
+        _parser.read(parfilepath_veh)
+        _veh_pars_peek = ast.literal_eval(_parser.get("VEH_PARS", "veh_pars"))
+
+    _engine_pars_peek = _veh_pars_peek.get("engine", {})
+
+
     # set velocity limit
     if driver_opts["vel_lim_glob"] is not None:
         vel_lim_glob = driver_opts["vel_lim_glob"]
-    elif solver_opts["series"] == "FE":
-        vel_lim_glob = 225.0 / 3.6
     else:
-        vel_lim_glob = np.inf
+        vel_lim_glob = _engine_pars_peek.get("vel_lim_glob", np.inf)
 
     # build cache key from all parameters that affect track creation
     _cache_key = (
@@ -164,30 +184,24 @@ def main(
     # CREATE CAR INSTANCE ----------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
 
-    # create instance - use custom params if provided, otherwise load from file
+    # create instance - use powertrain_type from vehicle config to select car class
+    _powertrain_type = _veh_pars_peek["powertrain_type"]
+
     if solver_opts.get("custom_vehicle_pars") is not None:
-        # Use custom vehicle parameters
         pars_veh = solver_opts["custom_vehicle_pars"]
-        if solver_opts["series"] in ("F1", "F1_2026"):
+        if _powertrain_type in ("hybrid", "combustion"):
             car = laptimesim.src.car_hybrid.CarHybrid(pars_veh=pars_veh)
-        elif solver_opts["series"] == "FE":
+        elif _powertrain_type == "electric":
             car = laptimesim.src.car_electric.CarElectric(pars_veh=pars_veh)
         else:
-            raise IOError("Unknown racing series!")
+            raise IOError(f"Unknown powertrain type: {_powertrain_type}")
     else:
-        # Load from file
-        vehicle_filename = solver_opts["vehicle"]
-        if not vehicle_filename.endswith(".ini"):
-            vehicle_filename += ".ini"
-        parfilepath = os.path.join(
-            repo_path, "laptimesim", "input", "vehicles", vehicle_filename
-        )
-        if solver_opts["series"] in ("F1", "F1_2026"):
-            car = laptimesim.src.car_hybrid.CarHybrid(parfilepath=parfilepath)
-        elif solver_opts["series"] == "FE":
-            car = laptimesim.src.car_electric.CarElectric(parfilepath=parfilepath)
+        if _powertrain_type in ("hybrid", "combustion"):
+            car = laptimesim.src.car_hybrid.CarHybrid(parfilepath=parfilepath_veh)
+        elif _powertrain_type == "electric":
+            car = laptimesim.src.car_electric.CarElectric(parfilepath=parfilepath_veh)
         else:
-            raise IOError("Unknown racing series!")
+            raise IOError(f"Unknown powertrain type: {_powertrain_type}")
 
     # debug plot
     if debug_opts["use_debug_plots"]:
@@ -243,6 +257,9 @@ def main(
 
             # plot engine speed and gear selection
             lap.plot_enginespeed_gears()
+
+            # plot energy management (deploy/harvest)
+            lap.plot_energy_management()
 
     else:
         # sensitivity analysis -----------------------------------------------------------------------------------------
@@ -443,8 +460,7 @@ if __name__ == "__main__":
     }
 
     # solver options ---------------------------------------------------------------------------------------------------
-    # vehicle:                  vehicle parameter file
-    # series:                   F1, F1_2026, FE
+    # vehicle:                  vehicle parameter file (series is read from the vehicle config)
     # limit_braking_weak_side:  can be None, 'FA', 'RA', 'all' -> set if brake force potential should be determined
     #                           based on the weak (i.e. inner) side of the car, e.g. when braking into a corner
     # v_start:                  [m/s] velocity at start
@@ -455,7 +471,6 @@ if __name__ == "__main__":
 
     solver_opts_ = {
         "vehicle": "F1_Shanghai.ini",
-        "series": "F1",
         "limit_braking_weak_side": "FA",
         "v_start": 100.0 / 3.6,
         "find_v_start": True,

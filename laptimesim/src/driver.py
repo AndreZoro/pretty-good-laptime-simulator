@@ -25,6 +25,7 @@ class Driver(object):
     __slots__ = ("__carobj",
                  "__pars_driver",
                  "__em_boost_use",
+                 "__em_harvest_use",
                  "__throttle_pos",
                  "__no_points_lac")
 
@@ -51,6 +52,9 @@ class Driver(object):
             self.em_boost_use = np.full(trackobj.no_points, False)
         else:
             raise IOError("Unknown energy management strategy!")
+
+        # em_harvest_use contains where active harvesting (MGU-K as generator) should be applied
+        self.em_harvest_use = np.full(trackobj.no_points, False)
 
         # calculate number of points in front of a braking point without throttle (lac = lift and coast)
         if self.pars_driver["use_lift_coast"]:
@@ -86,6 +90,10 @@ class Driver(object):
     def __set_em_boost_use(self, x: np.ndarray) -> None: self.__em_boost_use = x
     em_boost_use = property(__get_em_boost_use, __set_em_boost_use)
 
+    def __get_em_harvest_use(self) -> np.ndarray: return self.__em_harvest_use
+    def __set_em_harvest_use(self, x: np.ndarray) -> None: self.__em_harvest_use = x
+    em_harvest_use = property(__get_em_harvest_use, __set_em_harvest_use)
+
     def __get_throttle_pos(self) -> np.ndarray: return self.__throttle_pos
     def __set_throttle_pos(self, x: np.ndarray) -> None: self.__throttle_pos = x
     throttle_pos = property(__get_throttle_pos, __set_throttle_pos)
@@ -108,6 +116,7 @@ class Driver(object):
         else:
             raise IOError("Unknown energy management strategy!")
 
+        self.em_harvest_use = np.full(trackobj.no_points, False)
         self.throttle_pos = np.ones(trackobj.no_points)
 
         if any((self.pars_driver["yellow_s1"], self.pars_driver["yellow_s2"], self.pars_driver["yellow_s3"])):
@@ -252,21 +261,26 @@ class Driver(object):
                         es_final: float):
         """erso = ERS-optimized. Ranks deployment points by available ERS power / velocity, which is proportional to
         the acceleration force per watt. This naturally favors corner exits (full ERS power, low speed) over straights
-        (curtailed power, high speed). For cars without ers_speed_limit, degenerates to LS behavior."""
+        (curtailed power, high speed). For cars without ers_speed_limit, degenerates to LS behavior.
+
+        Additionally enables active harvesting at high-speed points where deployment is curtailed, allowing the MGU-K
+        to act as a generator to charge the battery for more effective deployment at corner exits."""
 
         # input check: energy store
         if es_final < 0.0:
             print("WARNING: ES charge state already negative when entering EM strategy calculation!")
 
         no_points = t_cl.size - 1
+        has_speed_limit = hasattr(self.carobj, 'pow_e_motor_max') and \
+            self.carobj.pars_engine.get("ers_speed_limit", False)
+        pow_e = self.carobj.pars_engine["pow_e_motor"]
 
         # compute efficiency score for each point: available ERS power / velocity
-        if hasattr(self.carobj, 'pow_e_motor_max') and self.carobj.pars_engine.get("ers_speed_limit", False):
-            score = np.array([self.carobj.pow_e_motor_max(vel_cl[i]) / max(vel_cl[i], 1.0)
-                              for i in range(no_points)])
+        if has_speed_limit:
+            pow_avail = np.array([self.carobj.pow_e_motor_max(vel_cl[i]) for i in range(no_points)])
+            score = pow_avail / np.maximum(vel_cl[:no_points], 1.0)
         else:
-            # fallback: use constant power, degenerates to LS (1/vel ranking)
-            pow_e = self.carobj.pars_engine["pow_e_motor"]
+            pow_avail = np.full(no_points, pow_e)
             score = pow_e / np.maximum(vel_cl[:no_points], 1.0)
 
         # sort by score descending (highest efficiency first)
@@ -296,6 +310,13 @@ class Driver(object):
                 es_final -= (self.carobj.power_demand_e_motor_drive(n=n_cl[ind_cur],
                                                                     m_e_motor=np.array(m_e_motor))
                              * (t_cl[ind_cur + 1] - t_cl[ind_cur]))
+
+        # active harvesting: at high-speed points where deployment is curtailed, enable MGU-K generator mode
+        if has_speed_limit:
+            harvest_threshold = self.pars_driver.get("ers_harvest_threshold", 0.3)
+            for i in range(no_points):
+                if not self.em_boost_use[i] and pow_avail[i] < harvest_threshold * pow_e:
+                    self.em_harvest_use[i] = True
 
     def __lift_coast(self, vel_cl: np.ndarray, n_lac: int):
         """Velocity input in m/s, n_lac is the number of points without throttle in front of a brake point."""

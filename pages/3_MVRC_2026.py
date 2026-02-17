@@ -128,12 +128,16 @@ custom_vehicle_pars = {
         "n_max": 11400.0,
         "n_end": 12200.0,
         "be_max": 100.0,
-        "pow_e_motor": 120e3,
+        "pow_e_motor": 350e3,
         "eta_e_motor": 0.9,
         "eta_e_motor_re": 0.15,
-        "eta_etc_re": 0.10,
-        "vel_min_e_motor": 27.777,
-        "torque_e_motor_max": 200.0,
+        "eta_etc_re": 0.0,
+        "vel_min_e_motor": 0.0,
+        "torque_e_motor_max": 500.0,
+        "ers_speed_limit": True,
+        "max_e_energy_storage": 4.0e6,
+        "e_rec_e_motor_max": 8.5e6,
+        "series": "F1_2026",
     },
     "gearbox": {
         "i_trans": [0.04, 0.070, 0.095, 0.117, 0.143, 0.172, 0.190, 0.206],
@@ -149,6 +153,8 @@ custom_vehicle_pars = {
         ],
         "e_i": [1.16, 1.11, 1.09, 1.08, 1.08, 1.08, 1.07, 1.07],
         "eta_g": 0.96,
+        "diff_lock_ratio": 0.7,
+        "t_shift": 0.025,
     },
     "tires": {
         "f": {
@@ -186,7 +192,6 @@ if run_button:
 
     solver_opts = {
         "vehicle": None,
-        "series": "F1",
         "limit_braking_weak_side": "FA",
         "v_start": 100.0 / 3.6,
         "find_v_start": True,

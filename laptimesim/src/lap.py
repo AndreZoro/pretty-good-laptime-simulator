@@ -45,6 +45,7 @@ class Lap(object):
         "__e_cons_cl",
         "__tire_loads",
         "__e_es_to_e_motor_max",
+        "__es_max",
     )
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -106,20 +107,12 @@ class Lap(object):
             (trackobj.no_points, 4)
         )  # [N] tire loads [FL, FR, RL, RR]
 
-        # [J/lap] maximum amount of energy allowed to recuperate in e motor
-        if self.pars_solver["series"] == "F1":
-            self.e_rec_e_motor_max = 2e6  # [J] F1: 2 MJ/lap
-            self.e_es_to_e_motor_max = (
-                4e6  # [J] F1: 4 MJ/lap  -> currently not considered!
-            )
-        elif self.pars_solver["series"] == "F1_2026":
-            self.e_rec_e_motor_max = 8.5e6  # [J] F1 2026: 8.5 MJ/lap
-            self.e_es_to_e_motor_max = (
-                4e6  # [J] F1 2026: 4 MJ/lap delta SoC -> currently not considered!
-            )
-        else:
-            self.e_rec_e_motor_max = np.inf
-            self.e_es_to_e_motor_max = np.inf
+        # [J/lap] maximum amount of energy allowed to recuperate in e motor (from vehicle config)
+        self.e_rec_e_motor_max = self.driverobj.carobj.pars_engine.get("e_rec_e_motor_max", np.inf)
+        self.e_es_to_e_motor_max = self.driverobj.carobj.pars_engine.get("e_es_to_e_motor_max", np.inf)
+
+        # [J] maximum energy storage capacity
+        self.es_max = self.driverobj.carobj.pars_engine.get("max_e_energy_storage", np.inf)
 
     # ------------------------------------------------------------------------------------------------------------------
     # GETTERS / SETTERS ------------------------------------------------------------------------------------------------
@@ -229,6 +222,14 @@ class Lap(object):
 
     e_rec_e_motor_max = property(__get_e_rec_e_motor_max, __set_e_rec_e_motor_max)
 
+    def __get_es_max(self) -> float:
+        return self.__es_max
+
+    def __set_es_max(self, x: float) -> None:
+        self.__es_max = x
+
+    es_max = property(__get_es_max, __set_es_max)
+
     def __get_pars_solver(self) -> dict:
         return self.__pars_solver
 
@@ -300,12 +301,8 @@ class Lap(object):
         self.e_cons_cl = np.zeros(self.trackobj.no_points_cl)
         self.tire_loads = np.zeros((self.trackobj.no_points, 4))
 
-        if self.pars_solver["series"] == "F1":
-            self.e_rec_e_motor_max = 2e6  # F1: 2 MJ/lap
-        elif self.pars_solver["series"] == "F1_2026":
-            self.e_rec_e_motor_max = 8.5e6  # F1 2026: 8.5 MJ/lap
-        else:
-            self.e_rec_e_motor_max = np.inf
+        self.e_rec_e_motor_max = self.driverobj.carobj.pars_engine.get("e_rec_e_motor_max", np.inf)
+        self.es_max = self.driverobj.carobj.pars_engine.get("max_e_energy_storage", np.inf)
 
     def simulate_lap(self):
         """
@@ -497,6 +494,9 @@ class Lap(object):
         pars_driver = driverobj.pars_driver
         throttle_pos = driverobj.throttle_pos
         em_boost_use = driverobj.em_boost_use
+        em_harvest_use = driverobj.em_harvest_use
+        pars_engine_eta_e_motor_re = carobj.pars_engine["eta_e_motor_re"]
+        es_max = self.es_max
 
         i = 0
         a_x = a_x_start
@@ -599,6 +599,15 @@ class Lap(object):
                     )
                 )
 
+                # active harvesting: MGU-K as generator at high-speed points
+                if (em_harvest_use[i] and m_e_motor[i] == 0.0
+                        and powertrain_type == "hybrid"
+                        and pars_driver["use_recuperation"]
+                        and np.sum(e_rec_e_motor) < self.e_rec_e_motor_max
+                        and es_cl[i] < es_max):
+                    harvest_torque = carobj.torque_e_motor(n=n_cl[i])
+                    m_e_motor[i] = -harvest_torque
+
                 # calculate available acceleration force at the tire
                 f_x_powert = (
                     carobj.pars_gearbox["eta_g"]
@@ -676,27 +685,38 @@ class Lap(object):
                     vel=vel_cl[i + 1]
                 )
 
-                # apply shift time penalty: reduce powertrain force for the fraction of the step spent shifting
-                if gear_cl[i + 1] != gear_cl[i] and t_shift > 0.0:
-                    dt_step = 2 * stepsize / (vel_cl[i] + vel_cl[i + 1])
-                    shift_fraction = min(t_shift / dt_step, 1.0)
-                    f_x_powert_shifted = f_x_powert * (1.0 - shift_fraction)
-                    a_x_shifted = (
-                        f_x_powert_shifted
-                        - carobj.air_res(vel=vel_cl[i], drs=drs[i])
-                        - carobj.roll_res(f_z_tot=tire_loads[i].sum())
-                    ) / (pars_general_m * pars_gearbox_e_i[gear_cl[i]])
-                    vel_cl[i + 1] = math.sqrt(
-                        max(vel_cl[i] * vel_cl[i] + 2 * a_x_shifted * stepsize, 0.0)
-                    )
-                    gear_cl[i + 1], n_cl[i + 1] = carobj.find_gear(
-                        vel=vel_cl[i + 1]
-                    )
+                # analytical shift model: 25% torque during shift, velocity loss + time penalty
+                # only penalize genuine upshifts that stick (not boundary oscillation)
+                gear_before = gear_cl[i]
+                gear_shifted = False
 
-                # calculate time at start of next point
+                if gear_cl[i + 1] > gear_before and t_shift > 0.0:
+                    # net force during shift: 25% powertrain minus drag and rolling resistance
+                    f_net_shift = (
+                        0.25 * f_x_powert
+                        - carobj.air_res(vel=vel_cl[i + 1], drs=drs[i])
+                        - carobj.roll_res(f_z_tot=tire_loads[i].sum())
+                    )
+                    a_shift = f_net_shift / (pars_general_m * pars_gearbox_e_i[gear_before])
+
+                    # apply velocity change over shift duration
+                    vel_shifted = vel_cl[i + 1] + a_shift * t_shift
+
+                    # check if the shift actually sticks (car stays in the higher gear)
+                    new_gear, new_n = carobj.find_gear(vel=vel_shifted)
+                    if new_gear > gear_before:
+                        # genuine shift — apply penalty
+                        vel_cl[i + 1] = max(vel_shifted, 0.1)
+                        gear_cl[i + 1] = new_gear
+                        n_cl[i + 1] = new_n
+                        gear_shifted = True
+
+                # calculate time at start of next point (includes shift penalty)
                 t_cl[i + 1] = t_cl[i] + 2 * stepsize / (
                     vel_cl[i] + vel_cl[i + 1]
                 )
+                if gear_shifted:
+                    t_cl[i + 1] += t_shift
 
                 # calculate energy recuperated during current step by electric turbocharger in [J] (only during acc.)
                 if (
@@ -714,19 +734,35 @@ class Lap(object):
                 else:
                     e_rec_etc = 0.0
 
-                # calculate energy used by e motor during current step in [J]
-                e_cons_e_motor = carobj.power_demand_e_motor_drive(
-                    n=n_cl[i], m_e_motor=m_e_motor[i]
-                ) * (t_cl[i + 1] - t_cl[i])
+                # calculate energy used/harvested by e motor during current step in [J]
+                if m_e_motor[i] >= 0.0:
+                    # deployment
+                    e_cons_e_motor = carobj.power_demand_e_motor_drive(
+                        n=n_cl[i], m_e_motor=m_e_motor[i]
+                    ) * (t_cl[i + 1] - t_cl[i])
+                    e_harvest = 0.0
+                else:
+                    # active harvesting (MGU-K as generator)
+                    e_cons_e_motor = 0.0
+                    e_harvest = (
+                        pars_engine_eta_e_motor_re
+                        * abs(m_e_motor[i])
+                        * 2 * math.pi * n_cl[i]
+                        * (t_cl[i + 1] - t_cl[i])
+                    )
+                    e_rec_e_motor[i] = e_harvest
 
                 # calculate changes in the hybrid energy storage [J]
-                es_cl[i + 1] = es_cl[i] + e_rec_etc - e_cons_e_motor
+                es_cl[i + 1] = es_cl[i] + e_rec_etc + e_harvest - e_cons_e_motor
 
                 if (
                     powertrain_type != "electric"
                     and es_cl[i + 1] < 0.0
                 ):
                     es_cl[i + 1] = 0.0
+
+                if es_cl[i + 1] > es_max:
+                    es_cl[i + 1] = es_max
 
                 # increment
                 i += 1
@@ -917,8 +953,17 @@ class Lap(object):
                             )
                         )
 
+                        # active harvesting in backward recalculation (energy accounting only, velocity already fixed)
+                        if (em_harvest_use[k] and m_e_motor[k] == 0.0
+                                and powertrain_type == "hybrid"
+                                and pars_driver["use_recuperation"]
+                                and np.sum(e_rec_e_motor) < self.e_rec_e_motor_max
+                                and es_cl[k] < es_max):
+                            harvest_torque = carobj.torque_e_motor(n=n_cl[k])
+                            m_e_motor[k] = -harvest_torque
+
                         # check torques provided and requested
-                        if not math.isclose(
+                        if m_e_motor[k] >= 0.0 and not math.isclose(
                             m_eng[k] + m_e_motor[k], m_requ[k]
                         ):
                             print(
@@ -946,22 +991,36 @@ class Lap(object):
                         else:
                             e_rec_etc = 0.0
 
-                        # calculate energy used by e motor during current step in [J]
-                        e_cons_e_motor = (
-                            carobj.power_demand_e_motor_drive(
-                                n=n_cl[k], m_e_motor=m_e_motor[k]
+                        # calculate energy used/harvested by e motor during current step in [J]
+                        if m_e_motor[k] >= 0.0:
+                            e_cons_e_motor = (
+                                carobj.power_demand_e_motor_drive(
+                                    n=n_cl[k], m_e_motor=m_e_motor[k]
+                                )
+                                * (t_cl[k + 1] - t_cl[k])
                             )
-                            * (t_cl[k + 1] - t_cl[k])
-                        )
+                            e_harvest = 0.0
+                        else:
+                            e_cons_e_motor = 0.0
+                            e_harvest = (
+                                pars_engine_eta_e_motor_re
+                                * abs(m_e_motor[k])
+                                * 2 * math.pi * n_cl[k]
+                                * (t_cl[k + 1] - t_cl[k])
+                            )
+                            e_rec_e_motor[k] = e_harvest
 
                         # calculate changes in the hybrid energy storage [J]
-                        es_cl[k + 1] = es_cl[k] + e_rec_etc - e_cons_e_motor
+                        es_cl[k + 1] = es_cl[k] + e_rec_etc + e_harvest - e_cons_e_motor
 
                         if (
                             powertrain_type != "electric"
                             and es_cl[k + 1] < 0.0
                         ):
                             es_cl[k + 1] = 0.0
+
+                        if es_cl[k + 1] > es_max:
+                            es_cl[k + 1] = es_max
 
                     else:
                         """Engine not demanded -> no powertrain torques required. However, we have to calculate kinetic
@@ -988,6 +1047,9 @@ class Lap(object):
                         # update energy storage (no energy harvested in el. turbocharger while engine is not demanded)
                         es_cl[k + 1] = es_cl[k] + e_rec_e_motor[k]
 
+                        if es_cl[k + 1] > es_max:
+                            es_cl[k + 1] = es_max
+
                 # reset longitudinal acceleration for next step (almost zero during maximum cornering)
                 a_x = 0.0
 
@@ -1007,7 +1069,7 @@ class Lap(object):
 
     def plot_lat_acc(self):
         a_y_tmp = np.power(self.vel_cl[:-1], 2) * self.trackobj.kappa
-        if self.pars_solver["series"] in ("F1", "F1_2026"):
+        if self.driverobj.carobj.powertrain_type in ("hybrid", "combustion"):
             a_y_valid = 50.0
         else:
             a_y_valid = 30.0
@@ -1049,7 +1111,7 @@ class Lap(object):
             * self.driverobj.carobj.pars_general["m"]
             * self.driverobj.carobj.pars_general["g"]
         )
-        if self.pars_solver["series"] in ("F1", "F1_2026"):
+        if self.driverobj.carobj.powertrain_type in ("hybrid", "combustion"):
             f_z_dyn_valid = f_z_stat_avg * 5.0
             legend_text = "5 * avg. static"
         else:
@@ -1096,7 +1158,7 @@ class Lap(object):
         f_x_aero = 0.5 * c_w_a * rho_air * np.power(self.vel_cl[:-1], 2)
         f_z_aero = 0.5 * (c_z_a_f + c_z_a_r) * rho_air * np.power(self.vel_cl[:-1], 2)
 
-        if self.pars_solver["series"] in ("F1", "F1_2026"):
+        if self.driverobj.carobj.powertrain_type in ("hybrid", "combustion"):
             f_z_aero_valid = 18e3
         else:
             f_z_aero_valid = 6e3
@@ -1357,6 +1419,41 @@ class Lap(object):
         ax2.set_ylabel("gear")
 
         fig.tight_layout()
+        plt.show()
+
+    def plot_energy_management(self):
+        dists = self.trackobj.dists_cl[:-1]
+
+        # e-motor power: positive = deploy, negative = harvest
+        p_e_motor = 2 * math.pi * self.n_cl[:-1] * self.m_e_motor  # [W]
+
+        # cumulative harvested energy (from e_rec_e_motor which tracks both braking and active harvest)
+        e_harvest_cum = np.cumsum(self.e_rec_e_motor) / 1000.0  # [kJ]
+
+        fig, (ax1, ax2, ax3) = plt.subplots(nrows=3, ncols=1, sharex=True, figsize=(12.0, 9.0))
+        fig.suptitle("Energy management")
+
+        # subplot 1: energy storage state
+        ax1.plot(self.trackobj.dists_cl, self.es_cl / 1000.0, "k-")
+        ax1.set_ylabel("ES state in kJ")
+        ax1.grid()
+
+        # subplot 2: e-motor power with deploy/harvest coloring
+        ax2.fill_between(dists, p_e_motor / 1000.0, 0,
+                         where=p_e_motor >= 0, color="C0", alpha=0.7, label="deploy")
+        ax2.fill_between(dists, p_e_motor / 1000.0, 0,
+                         where=p_e_motor < 0, color="C3", alpha=0.7, label="harvest")
+        ax2.set_ylabel("e-motor power in kW")
+        ax2.legend(loc="upper right")
+        ax2.grid()
+
+        # subplot 3: cumulative harvested energy
+        ax3.plot(dists, e_harvest_cum, "C3-")
+        ax3.set_xlabel("distance in m")
+        ax3.set_ylabel("cumulated harvest in kJ")
+        ax3.grid()
+
+        plt.tight_layout()
         plt.show()
 
 
