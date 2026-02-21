@@ -484,6 +484,9 @@ class Lap(object):
         mu = self.trackobj.mu
         stepsize = self.trackobj.stepsize
         drs = self.trackobj.drs
+        use_active_aero = "active_aero_speed_threshold" in carobj.pars_general
+        aa_threshold = carobj.pars_general.get("active_aero_speed_threshold", float("inf"))
+        aa_ay_limit = carobj.pars_general.get("active_aero_ay_limit", float("inf"))
         vel_lim = self.trackobj.vel_lim
         no_points = self.trackobj.no_points
         pars_general_m = carobj.pars_general["m"]
@@ -506,6 +509,9 @@ class Lap(object):
             a_y = vel_cl[i] * vel_cl[i] * kappa[i]
             f_y_f, f_y_r = carobj.calc_lat_forces(a_y=a_y)
 
+            # active aero state: speed above threshold AND lateral acceleration below limit
+            aa = (vel_cl[i] >= aa_threshold and abs(a_y) <= aa_ay_limit) if use_active_aero else drs[i]
+
             # calculate tire force potentials (using a_x = 0.0 (maximum cornering) to find out if we can stay on track)
             (
                 f_x_pot_fl,
@@ -521,7 +527,7 @@ class Lap(object):
                 f_y_pot_rr,
                 tire_loads[i, 3],
             ) = carobj.tire_force_pots(
-                vel=vel_cl[i], a_x=0.0, a_y=a_y, mu=mu[i]
+                vel=vel_cl[i], a_x=0.0, a_y=a_y, mu=mu[i], active_aero=aa
             )
 
             # ----------------------------------------------------------------------------------------------------------
@@ -570,7 +576,7 @@ class Lap(object):
                     f_y_pot_rr,
                     tire_loads[i, 3],
                 ) = carobj.tire_force_pots(
-                    vel=vel_cl[i], a_x=a_x, a_y=a_y, mu=mu[i]
+                    vel=vel_cl[i], a_x=a_x, a_y=a_y, mu=mu[i], active_aero=aa
                 )
 
                 # calculate remaining tire potential at front and rear axle for longitudinal force transmission
@@ -621,7 +627,7 @@ class Lap(object):
                 # calculate reached longitudinal acceleration (e_i accounts for rotational inertia)
                 a_x_start = (
                     f_x_powert
-                    - carobj.air_res(vel=vel_cl[i], drs=drs[i])
+                    - carobj.air_res(vel=vel_cl[i], drs=aa)
                     - carobj.roll_res(f_z_tot=tire_loads[i].sum())
                 ) / (pars_general_m * pars_gearbox_e_i[gear_cl[i]])
 
@@ -636,7 +642,7 @@ class Lap(object):
                 if i + 1 < no_points:
                     a_x_end = (
                         f_x_powert
-                        - carobj.air_res(vel=v_pred, drs=drs[i])
+                        - carobj.air_res(vel=v_pred, drs=aa)
                         - carobj.roll_res(f_z_tot=tire_loads[i].sum())
                     ) / (pars_general_m * pars_gearbox_e_i[gear_cl[i]])
 
@@ -694,7 +700,7 @@ class Lap(object):
                     # net force during shift: 25% powertrain minus drag and rolling resistance
                     f_net_shift = (
                         0.25 * f_x_powert
-                        - carobj.air_res(vel=vel_cl[i + 1], drs=drs[i])
+                        - carobj.air_res(vel=vel_cl[i + 1], drs=aa)
                         - carobj.roll_res(f_z_tot=tire_loads[i].sum())
                     )
                     a_shift = f_net_shift / (pars_general_m * pars_gearbox_e_i[gear_before])
@@ -840,6 +846,7 @@ class Lap(object):
                             a_x=a_x,
                             a_y=a_y,
                             mu=mu[i - j - 1],
+                            active_aero=False,
                         )
 
                         # calculate remaining tire potential for deceleration using all wheels
@@ -916,7 +923,8 @@ class Lap(object):
                     # to consider the maximal possible deceleration that was used to calculate the velocity profile also
                     # in the energy calculations)
                     if k == i - j - 1:
-                        drs_tmp = drs[k]
+                        a_y_k = vel_cl[k] * vel_cl[k] * kappa[k]
+                        drs_tmp = (vel_cl[k] >= aa_threshold and abs(a_y_k) <= aa_ay_limit) if use_active_aero else drs[k]
                     else:
                         drs_tmp = False
 

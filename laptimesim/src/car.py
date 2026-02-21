@@ -22,7 +22,8 @@ def _build_jit_params(pars_general, pars_engine, pars_tires, pars_gearbox):
     params[1] = pars_general["rho_air"]     # _RHO
     params[2] = pars_general["c_w_a"]       # _CWA
     params[3] = pars_general["f_roll"]      # _FROLL
-    params[4] = pars_general["drs_factor"]  # _DRS
+    params[4] = pars_general.get("drs_factor",
+                    pars_general.get("active_aero_drag_reduction", 0.0))  # _DRS
     params[5] = pars_general["lf"]          # _LF
     params[6] = pars_general["lr"]          # _LR
 
@@ -94,6 +95,7 @@ class Car(object):
         "__f_z_calc_stat",
         "_jit_params",
         "_jit_fz_data",
+        "_jit_fz_data_aa",
     )
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -183,6 +185,19 @@ class Car(object):
         self._jit_params = _build_jit_params(pars_general, pars_engine, pars_tires, pars_gearbox)
         self._jit_fz_data = _build_jit_fz_data(self.f_z_calc_stat)
 
+        # active aero fz_data: aero rows scaled by downforce reduction fractions
+        dz_f = pars_general.get("active_aero_dz_f", 0.0)
+        dz_r = pars_general.get("active_aero_dz_r", 0.0)
+        if dz_f != 0.0 or dz_r != 0.0:
+            fz_aa = self._jit_fz_data.copy()
+            fz_aa[5, 0] *= (1.0 - dz_f)  # FL aero
+            fz_aa[5, 1] *= (1.0 - dz_f)  # FR aero
+            fz_aa[5, 2] *= (1.0 - dz_r)  # RL aero
+            fz_aa[5, 3] *= (1.0 - dz_r)  # RR aero
+            self._jit_fz_data_aa = fz_aa
+        else:
+            self._jit_fz_data_aa = self._jit_fz_data
+
     # ------------------------------------------------------------------------------------------------------------------
     # GETTERS / SETTERS ------------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
@@ -239,7 +254,8 @@ class Car(object):
     # METHODS (CALCULATIONS) -------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
 
-    def tire_force_pots(self, vel: float, a_x: float, a_y: float, mu: float) -> tuple:
+    def tire_force_pots(self, vel: float, a_x: float, a_y: float, mu: float,
+                        active_aero: bool = False) -> tuple:
         """
         The function is used to calculate the transmitted tire forces depending on the current longitudinal and lateral
         accelerations and velocity.
@@ -247,8 +263,10 @@ class Car(object):
         dynamic load transfers) and the force potentials f_t of all four tires. Vehicle coordinate system: x - front,
         y - left, z - up. The tire model includes the reduction of the force potential with rising tire loads as
         tire_par2 are negativ.
+        active_aero: when True, uses reduced-downforce fz_data (2026 active aero open position).
         """
-        return _tire_force_pots(vel, a_x, a_y, mu, self._jit_params, self._jit_fz_data)
+        fz = self._jit_fz_data_aa if active_aero else self._jit_fz_data
+        return _tire_force_pots(vel, a_x, a_y, mu, self._jit_params, fz)
 
     def plot_tire_characteristics(self) -> None:
         # calculate relevant data
@@ -318,8 +336,10 @@ class Car(object):
 
     def air_res(self, vel: float, drs: bool) -> float:
         """Velocity input in m/s. Output is in N."""
+        drag_reduction = self.pars_general.get(
+            "drs_factor", self.pars_general.get("active_aero_drag_reduction", 0.0))
         return _air_res(vel, drs, self.pars_general["rho_air"],
-                        self.pars_general["c_w_a"], self.pars_general["drs_factor"])
+                        self.pars_general["c_w_a"], drag_reduction)
 
     def roll_res(self, f_z_tot: float) -> float:
         """Output is in N."""
