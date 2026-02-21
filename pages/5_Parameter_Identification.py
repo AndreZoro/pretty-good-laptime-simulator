@@ -126,8 +126,7 @@ def run_sim_with_params(
         "mu_weather": 1.0,
         "interp_stepsize_des": 30.0,  # Large step = fast
         "curv_filt_width": 60.0,  # Must result in odd window size (60/30 + 1 = 3)
-        "use_drs1": True,
-        "use_drs2": True,
+        "use_drs": True,
         "use_pit": False,
     }
 
@@ -1189,8 +1188,7 @@ if run_button:
         "mu_weather": 1.0,
         "interp_stepsize_des": 5.0,
         "curv_filt_width": 10.0,
-        "use_drs1": True,
-        "use_drs2": True,
+        "use_drs": True,
         "use_pit": False,
     }
     final_solver_opts = {

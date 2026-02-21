@@ -484,9 +484,6 @@ class Lap(object):
         mu = self.trackobj.mu
         stepsize = self.trackobj.stepsize
         drs = self.trackobj.drs
-        use_active_aero = "active_aero_speed_threshold" in carobj.pars_general
-        aa_threshold = carobj.pars_general.get("active_aero_speed_threshold", float("inf"))
-        aa_ay_limit = carobj.pars_general.get("active_aero_ay_limit", float("inf"))
         vel_lim = self.trackobj.vel_lim
         no_points = self.trackobj.no_points
         pars_general_m = carobj.pars_general["m"]
@@ -509,9 +506,6 @@ class Lap(object):
             a_y = vel_cl[i] * vel_cl[i] * kappa[i]
             f_y_f, f_y_r = carobj.calc_lat_forces(a_y=a_y)
 
-            # active aero state: speed above threshold AND lateral acceleration below limit
-            aa = (vel_cl[i] >= aa_threshold and abs(a_y) <= aa_ay_limit) if use_active_aero else drs[i]
-
             # calculate tire force potentials (using a_x = 0.0 (maximum cornering) to find out if we can stay on track)
             (
                 f_x_pot_fl,
@@ -527,7 +521,7 @@ class Lap(object):
                 f_y_pot_rr,
                 tire_loads[i, 3],
             ) = carobj.tire_force_pots(
-                vel=vel_cl[i], a_x=0.0, a_y=a_y, mu=mu[i], active_aero=aa
+                vel=vel_cl[i], a_x=0.0, a_y=a_y, mu=mu[i], active_aero=drs[i]
             )
 
             # ----------------------------------------------------------------------------------------------------------
@@ -576,7 +570,7 @@ class Lap(object):
                     f_y_pot_rr,
                     tire_loads[i, 3],
                 ) = carobj.tire_force_pots(
-                    vel=vel_cl[i], a_x=a_x, a_y=a_y, mu=mu[i], active_aero=aa
+                    vel=vel_cl[i], a_x=a_x, a_y=a_y, mu=mu[i], active_aero=drs[i]
                 )
 
                 # calculate remaining tire potential at front and rear axle for longitudinal force transmission
@@ -627,7 +621,7 @@ class Lap(object):
                 # calculate reached longitudinal acceleration (e_i accounts for rotational inertia)
                 a_x_start = (
                     f_x_powert
-                    - carobj.air_res(vel=vel_cl[i], drs=aa)
+                    - carobj.air_res(vel=vel_cl[i], drs=drs[i])
                     - carobj.roll_res(f_z_tot=tire_loads[i].sum())
                 ) / (pars_general_m * pars_gearbox_e_i[gear_cl[i]])
 
@@ -642,7 +636,7 @@ class Lap(object):
                 if i + 1 < no_points:
                     a_x_end = (
                         f_x_powert
-                        - carobj.air_res(vel=v_pred, drs=aa)
+                        - carobj.air_res(vel=v_pred, drs=drs[i])
                         - carobj.roll_res(f_z_tot=tire_loads[i].sum())
                     ) / (pars_general_m * pars_gearbox_e_i[gear_cl[i]])
 
@@ -700,7 +694,7 @@ class Lap(object):
                     # net force during shift: 25% powertrain minus drag and rolling resistance
                     f_net_shift = (
                         0.25 * f_x_powert
-                        - carobj.air_res(vel=vel_cl[i + 1], drs=aa)
+                        - carobj.air_res(vel=vel_cl[i + 1], drs=drs[i])
                         - carobj.roll_res(f_z_tot=tire_loads[i].sum())
                     )
                     a_shift = f_net_shift / (pars_general_m * pars_gearbox_e_i[gear_before])
@@ -923,8 +917,7 @@ class Lap(object):
                     # to consider the maximal possible deceleration that was used to calculate the velocity profile also
                     # in the energy calculations)
                     if k == i - j - 1:
-                        a_y_k = vel_cl[k] * vel_cl[k] * kappa[k]
-                        drs_tmp = (vel_cl[k] >= aa_threshold and abs(a_y_k) <= aa_ay_limit) if use_active_aero else drs[k]
+                        drs_tmp = drs[k]
                     else:
                         drs_tmp = False
 
@@ -1232,71 +1225,27 @@ class Lap(object):
         # plot raceline
         ax1.plot(self.trackobj.raceline[:, 0], self.trackobj.raceline[:, 1], "k-")
 
-        # plot DRS zones
-        if self.trackobj.pars_track["use_drs1"]:
-            if self.trackobj.zone_inds["drs1_a"] < self.trackobj.zone_inds["drs1_d"]:
-                # common case
+        # plot DRS / active aero zones
+        for a_idx, d_idx in zip(self.trackobj.zone_inds["drs_zone_act"],
+                                 self.trackobj.zone_inds["drs_zone_deact"]):
+            if a_idx < d_idx:
                 ax1.plot(
-                    self.trackobj.raceline[
-                        self.trackobj.zone_inds["drs1_a"] : self.trackobj.zone_inds[
-                            "drs1_d"
-                        ],
-                        0,
-                    ],
-                    self.trackobj.raceline[
-                        self.trackobj.zone_inds["drs1_a"] : self.trackobj.zone_inds[
-                            "drs1_d"
-                        ],
-                        1,
-                    ],
+                    self.trackobj.raceline[a_idx:d_idx, 0],
+                    self.trackobj.raceline[a_idx:d_idx, 1],
                     "g--",
                     linewidth=3.0,
                 )
             else:
-                # DRS zone is split by start/finish line
+                # zone wraps around start/finish line
                 ax1.plot(
-                    self.trackobj.raceline[self.trackobj.zone_inds["drs1_a"] :, 0],
-                    self.trackobj.raceline[self.trackobj.zone_inds["drs1_a"] :, 1],
+                    self.trackobj.raceline[a_idx:, 0],
+                    self.trackobj.raceline[a_idx:, 1],
                     "g--",
                     linewidth=3.0,
                 )
                 ax1.plot(
-                    self.trackobj.raceline[: self.trackobj.zone_inds["drs1_d"], 0],
-                    self.trackobj.raceline[: self.trackobj.zone_inds["drs1_d"], 1],
-                    "g--",
-                    linewidth=3.0,
-                )
-
-        if self.trackobj.pars_track["use_drs2"]:
-            if self.trackobj.zone_inds["drs2_a"] < self.trackobj.zone_inds["drs2_d"]:
-                # common case
-                ax1.plot(
-                    self.trackobj.raceline[
-                        self.trackobj.zone_inds["drs2_a"] : self.trackobj.zone_inds[
-                            "drs2_d"
-                        ],
-                        0,
-                    ],
-                    self.trackobj.raceline[
-                        self.trackobj.zone_inds["drs2_a"] : self.trackobj.zone_inds[
-                            "drs2_d"
-                        ],
-                        1,
-                    ],
-                    "g--",
-                    linewidth=3.0,
-                )
-            else:
-                # DRS zone is split by start/finish line
-                ax1.plot(
-                    self.trackobj.raceline[self.trackobj.zone_inds["drs2_a"] :, 0],
-                    self.trackobj.raceline[self.trackobj.zone_inds["drs2_a"] :, 1],
-                    "g--",
-                    linewidth=3.0,
-                )
-                ax1.plot(
-                    self.trackobj.raceline[: self.trackobj.zone_inds["drs2_d"], 0],
-                    self.trackobj.raceline[: self.trackobj.zone_inds["drs2_d"], 1],
+                    self.trackobj.raceline[:d_idx, 0],
+                    self.trackobj.raceline[:d_idx, 1],
                     "g--",
                     linewidth=3.0,
                 )

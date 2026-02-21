@@ -29,8 +29,7 @@ def sample_pars_track():
         "mu_weather": 1.0,
         "interp_stepsize_des": 5.0,
         "curv_filt_width": 10.0,
-        "use_drs1": True,
-        "use_drs2": True,
+        "use_drs": True,
         "use_pit": False,
     }
 
@@ -119,8 +118,7 @@ class TestTrackFriction:
             "mu_weather": 1.0,
             "interp_stepsize_des": 5.0,
             "curv_filt_width": 10.0,
-            "use_drs1": False,
-            "use_drs2": False,
+            "use_drs": False,
             "use_pit": False,
         }
         track_dry = Track(pars_track=pars_dry, parfilepath=parfilepath, trackfilepath=trackfilepath)
@@ -132,8 +130,7 @@ class TestTrackFriction:
             "mu_weather": 0.7,
             "interp_stepsize_des": 5.0,
             "curv_filt_width": 10.0,
-            "use_drs1": False,
-            "use_drs2": False,
+            "use_drs": False,
             "use_pit": False,
         }
         track_wet = Track(pars_track=pars_wet, parfilepath=parfilepath, trackfilepath=trackfilepath)
@@ -218,8 +215,7 @@ class TestTrackFlipping:
             "mu_weather": 1.0,
             "interp_stepsize_des": 5.0,
             "curv_filt_width": 10.0,
-            "use_drs1": False,
-            "use_drs2": False,
+            "use_drs": False,
             "use_pit": False,
         }
 
@@ -229,8 +225,7 @@ class TestTrackFlipping:
             "mu_weather": 1.0,
             "interp_stepsize_des": 5.0,
             "curv_filt_width": 10.0,
-            "use_drs1": False,
-            "use_drs2": False,
+            "use_drs": False,
             "use_pit": False,
         }
 

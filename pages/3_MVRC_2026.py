@@ -118,7 +118,9 @@ custom_vehicle_pars = {
         "c_z_a_r": c_z_a_r,
         "g": 9.81,
         "rho_air": 1.18,
-        "drs_factor": 0.17,
+        "active_aero_drag_reduction": 0.5,
+        "active_aero_dz_f": 0.10,
+        "active_aero_dz_r": 0.30,
     },
     "engine": {
         "topology": "RWD",
@@ -185,8 +187,7 @@ if run_button:
         "mu_weather": 1.0,
         "interp_stepsize_des": 5.0,
         "curv_filt_width": 10.0,
-        "use_drs1": True,
-        "use_drs2": True,
+        "use_drs": True,
         "use_pit": False,
     }
 

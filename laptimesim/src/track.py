@@ -80,14 +80,14 @@ class Track(object):
         self.vel_lim = np.full(self.no_points, vel_lim_glob)  # [m/s] contains speed limit for whole track
         self.__set_pitspeed_limit()
 
-        # set DRS
-        self.drs = np.full(self.no_points, False)  # bool array contains the points where DRS is activated
-        self.__set_drs()
-
-        # adjust DRS zones to possible yellow flags
+        # adjust DRS zones to possible yellow flags (must happen before set_drs populates the array)
         self.__adj_drs_yellow_flag(yellow_s1=yellow_s1,
                                    yellow_s2=yellow_s2,
                                    yellow_s3=yellow_s3)
+
+        # set DRS
+        self.drs = np.full(self.no_points, False)  # bool array contains the points where DRS is activated
+        self.__set_drs()
 
     # ------------------------------------------------------------------------------------------------------------------
     # GETTERS / SETTERS ------------------------------------------------------------------------------------------------
@@ -286,31 +286,19 @@ class Track(object):
             self.zone_inds["pit_out"] = np.argmin(np.abs(self.pars_track["pit_out"] - self.dists_cl))
 
         # drs ----------------------------------------------------------------------------------------------------------
-        # initialize drs zone indices
-        self.zone_inds["drs1_a"] = 0
-        self.zone_inds["drs1_d"] = 0
-        self.zone_inds["drs2_a"] = 0
-        self.zone_inds["drs2_d"] = 0
+        # initialize drs zone indices as parallel lists (one entry per zone)
+        self.zone_inds["drs_zone_act"] = []
+        self.zone_inds["drs_zone_deact"] = []
 
-        # check if drs zones are set properly
-        if self.pars_track["use_drs1"] and (math.isclose(self.pars_track["drs1_act"], 0.0)
-                                            or math.isclose(self.pars_track["drs1_deact"], 0.0)):
-            print("WARNING: DRS zone 1 is not set properly. Therefore, DRS is deactivated in zone 1!")
-            self.pars_track["use_drs1"] = False
-
-        if self.pars_track["use_drs2"] and (math.isclose(self.pars_track["drs2_act"], 0.0)
-                                            or math.isclose(self.pars_track["drs2_deact"], 0.0)):
-            print("WARNING: DRS zone 2 is not set properly. Therefore, DRS is deactivated in zone 2!")
-            self.pars_track["use_drs2"] = False
-
-        # set indices
-        if self.pars_track["use_drs1"]:
-            self.zone_inds["drs1_a"] = np.argmin(np.abs(self.pars_track["drs1_act"] - self.dists_cl))
-            self.zone_inds["drs1_d"] = np.argmin(np.abs(self.pars_track["drs1_deact"] - self.dists_cl))
-
-        if self.pars_track["use_drs2"]:
-            self.zone_inds["drs2_a"] = np.argmin(np.abs(self.pars_track["drs2_act"] - self.dists_cl))
-            self.zone_inds["drs2_d"] = np.argmin(np.abs(self.pars_track["drs2_deact"] - self.dists_cl))
+        if self.pars_track["use_drs"]:
+            for idx, (act, deact) in enumerate(self.pars_track["drs_zones"]):
+                if math.isclose(act, 0.0) or math.isclose(deact, 0.0):
+                    print(f"WARNING: DRS zone {idx + 1} is not set properly. Skipping zone.")
+                    continue
+                self.zone_inds["drs_zone_act"].append(
+                    np.argmin(np.abs(act - self.dists_cl)))
+                self.zone_inds["drs_zone_deact"].append(
+                    np.argmin(np.abs(deact - self.dists_cl)))
 
     def __set_pitspeed_limit(self) -> None:
         if self.pars_track["use_pit"]:
@@ -318,57 +306,41 @@ class Track(object):
             self.vel_lim[self.zone_inds["pit_in"]:] = self.pars_track["pitspeed"]
 
     def __set_drs(self) -> None:
-        # check if pit stop causes DRS deactivation in zone 1
-        if self.pars_track["use_pit"]:
+        # check if pit stop causes deactivation of zone 1 (covers pit-entry straight)
+        if self.pars_track["use_pit"] and self.zone_inds["drs_zone_act"]:
             print("WARNING: DRS zone 1 gets deactivated due to pit stop!")
-            self.pars_track["use_drs1"] = False
+            self.zone_inds["drs_zone_act"].pop(0)
+            self.zone_inds["drs_zone_deact"].pop(0)
 
-        # DRS zone 1
-        if self.pars_track["use_drs1"]:
-            if self.zone_inds["drs1_a"] < self.zone_inds["drs1_d"]:
+        for a_idx, d_idx in zip(self.zone_inds["drs_zone_act"],
+                                 self.zone_inds["drs_zone_deact"]):
+            if a_idx < d_idx:
                 # common case
-                self.drs[self.zone_inds["drs1_a"]:self.zone_inds["drs1_d"]] = True
+                self.drs[a_idx:d_idx] = True
             else:
                 # DRS zone is split by start/finish line
-                self.drs[self.zone_inds["drs1_a"]:] = True
-                self.drs[:self.zone_inds["drs1_d"]] = True
-
-        # DRS zone 2
-        if self.pars_track["use_drs2"]:
-            if self.zone_inds["drs2_a"] < self.zone_inds["drs2_d"]:
-                # common case
-                self.drs[self.zone_inds["drs2_a"]:self.zone_inds["drs2_d"]] = True
-            else:
-                # DRS zone is split by start/finish line
-                self.drs[self.zone_inds["drs2_a"]:] = True
-                self.drs[:self.zone_inds["drs2_d"]] = True
+                self.drs[a_idx:] = True
+                self.drs[:d_idx] = True
 
     def __adj_drs_yellow_flag(self, yellow_s1: bool, yellow_s2: bool, yellow_s3: bool):
-        """Adjust DRS zones to yellow flags -> deactivate DRS if yellow flags are active in the according sectors."""
+        """Adjust DRS zones to yellow flags -> deactivate any zone whose activation or deactivation
+        point falls inside a sector that has a yellow flag."""
 
-        # DRS zone 1 ---------------------------------------------------------------------------------------------------
-        if self.pars_track["use_drs1"]:
-            if yellow_s1 and (0 <= self.zone_inds["drs1_a"] < self.zone_inds["s12"]
-                              or 0 <= self.zone_inds["drs1_d"] < self.zone_inds["s12"]) \
-                or yellow_s2 and (self.zone_inds["s12"] <= self.zone_inds["drs1_a"] < self.zone_inds["s23"]
-                                  or self.zone_inds["s12"] <= self.zone_inds["drs1_d"] < self.zone_inds["s23"]) \
-                or yellow_s3 and (self.zone_inds["s23"] <= self.zone_inds["drs1_a"]
-                                  or self.zone_inds["s23"] <= self.zone_inds["drs1_d"]):
+        s12 = self.zone_inds["s12"]
+        s23 = self.zone_inds["s23"]
+        to_remove = []
 
-                print("WARNING: DRS zone 1 gets deactivated due to yellow flag!")
-                self.pars_track["use_drs1"] = False
+        for i, (a_idx, d_idx) in enumerate(zip(self.zone_inds["drs_zone_act"],
+                                                self.zone_inds["drs_zone_deact"])):
+            if (yellow_s1 and (0 <= a_idx < s12 or 0 <= d_idx < s12)
+                    or yellow_s2 and (s12 <= a_idx < s23 or s12 <= d_idx < s23)
+                    or yellow_s3 and (s23 <= a_idx or s23 <= d_idx)):
+                print(f"WARNING: DRS zone {i + 1} gets deactivated due to yellow flag!")
+                to_remove.append(i)
 
-        # DRS zone 2 ---------------------------------------------------------------------------------------------------
-        if self.pars_track["use_drs2"]:
-            if yellow_s1 and (0 <= self.zone_inds["drs2_a"] < self.zone_inds["s12"]
-                              or 0 <= self.zone_inds["drs2_d"] < self.zone_inds["s12"]) \
-                    or yellow_s2 and (self.zone_inds["s12"] <= self.zone_inds["drs2_a"] < self.zone_inds["s23"]
-                                      or self.zone_inds["s12"] <= self.zone_inds["drs2_d"] < self.zone_inds["s23"]) \
-                    or yellow_s3 and (self.zone_inds["s23"] <= self.zone_inds["drs2_a"]
-                                      or self.zone_inds["s23"] <= self.zone_inds["drs2_d"]):
-
-                print("WARNING: DRS zone 2 gets deactivated due to yellow flag!")
-                self.pars_track["use_drs2"] = False
+        for i in reversed(to_remove):
+            self.zone_inds["drs_zone_act"].pop(i)
+            self.zone_inds["drs_zone_deact"].pop(i)
 
     def check_track(self) -> None:
         """Recalculate raceline based on curvature. Raceline is an array containing x and y coords: [x, y].
@@ -424,35 +396,20 @@ class Track(object):
         # plot raceline
         ax1.plot(self.raceline[:, 0], self.raceline[:, 1], "k-")
 
-        # plot DRS zones
-        if self.pars_track["use_drs1"]:
-            if self.zone_inds["drs1_a"] < self.zone_inds["drs1_d"]:
-                # common case
-                ax1.plot(self.raceline[self.zone_inds["drs1_a"]:self.zone_inds["drs1_d"], 0],
-                         self.raceline[self.zone_inds["drs1_a"]:self.zone_inds["drs1_d"], 1],
+        # plot DRS / active aero zones
+        for a_idx, d_idx in zip(self.zone_inds["drs_zone_act"],
+                                 self.zone_inds["drs_zone_deact"]):
+            if a_idx < d_idx:
+                ax1.plot(self.raceline[a_idx:d_idx, 0],
+                         self.raceline[a_idx:d_idx, 1],
                          "g--", linewidth=3.0)
             else:
-                # DRS zone is split by start/finish line
-                ax1.plot(self.raceline[self.zone_inds["drs1_a"]:, 0],
-                         self.raceline[self.zone_inds["drs1_a"]:, 1],
+                # zone wraps around start/finish line
+                ax1.plot(self.raceline[a_idx:, 0],
+                         self.raceline[a_idx:, 1],
                          "g--", linewidth=3.0)
-                ax1.plot(self.raceline[:self.zone_inds["drs1_d"], 0],
-                         self.raceline[:self.zone_inds["drs1_d"], 1],
-                         "g--", linewidth=3.0)
-
-        if self.pars_track["use_drs2"]:
-            if self.zone_inds["drs2_a"] < self.zone_inds["drs2_d"]:
-                # common case
-                ax1.plot(self.raceline[self.zone_inds["drs2_a"]:self.zone_inds["drs2_d"], 0],
-                         self.raceline[self.zone_inds["drs2_a"]:self.zone_inds["drs2_d"], 1],
-                         "g--", linewidth=3.0)
-            else:
-                # DRS zone is split by start/finish line
-                ax1.plot(self.raceline[self.zone_inds["drs2_a"]:, 0],
-                         self.raceline[self.zone_inds["drs2_a"]:, 1],
-                         "g--", linewidth=3.0)
-                ax1.plot(self.raceline[:self.zone_inds["drs2_d"], 0],
-                         self.raceline[:self.zone_inds["drs2_d"], 1],
+                ax1.plot(self.raceline[:d_idx, 0],
+                         self.raceline[:d_idx, 1],
                          "g--", linewidth=3.0)
 
         # plot pit

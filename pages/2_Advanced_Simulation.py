@@ -371,9 +371,8 @@ if vehicle == "Custom":
             }
         )
 
-with st.sidebar.expander("DRS Options"):
-    use_drs1 = st.checkbox("Enable DRS Zone 1", value=(_powertrain_type != "electric"))
-    use_drs2 = st.checkbox("Enable DRS Zone 2", value=(_powertrain_type != "electric"))
+with st.sidebar.expander("DRS / Active Aero Options"):
+    use_drs = st.checkbox("Enable DRS / Active Aero Zones", value=(_powertrain_type != "electric"))
 
 use_pit = st.sidebar.checkbox("Use Pit Lane", value=False)
 
@@ -494,8 +493,7 @@ if run_button:
         "mu_weather": mu_weather,
         "interp_stepsize_des": interp_stepsize,
         "curv_filt_width": curv_filt,
-        "use_drs1": use_drs1,
-        "use_drs2": use_drs2,
+        "use_drs": use_drs,
         "use_pit": use_pit,
     }
 

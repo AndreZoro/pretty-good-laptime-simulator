@@ -14,8 +14,7 @@ def test_laptimesim():
         "mu_weather": 1.0,
         "interp_stepsize_des": 5.0,
         "curv_filt_width": 10.0,
-        "use_drs1": True,
-        "use_drs2": True,
+        "use_drs": True,
         "use_pit": False,
     }
     solver_opts_ = {

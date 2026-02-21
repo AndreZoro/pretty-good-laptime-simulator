@@ -23,8 +23,7 @@ def get_default_opts():
         "mu_weather": 1.0,
         "interp_stepsize_des": 5.0,
         "curv_filt_width": 10.0,
-        "use_drs1": True,
-        "use_drs2": True,
+        "use_drs": True,
         "use_pit": False,
     }
     solver_opts = {
@@ -186,8 +185,7 @@ class TestDRSEffect:
         track_opts, solver_opts, driver_opts, sa_opts, debug_opts = get_default_opts()
 
         # With DRS
-        track_opts["use_drs1"] = True
-        track_opts["use_drs2"] = True
+        track_opts["use_drs"] = True
         lap_with_drs = main_laptimesim.main(
             track_opts=track_opts,
             solver_opts=solver_opts,
@@ -197,8 +195,7 @@ class TestDRSEffect:
         )
 
         # Without DRS
-        track_opts["use_drs1"] = False
-        track_opts["use_drs2"] = False
+        track_opts["use_drs"] = False
         lap_without_drs = main_laptimesim.main(
             track_opts=track_opts,
             solver_opts=solver_opts,

@@ -12,6 +12,13 @@ from typing import Optional
 import main_laptimesim
 
 
+
+def _compute_effective_drs(zone_drs: np.ndarray, acceleration: np.ndarray) -> np.ndarray:
+    """Return boolean array where DRS/active aero was actually open.
+    DRS closes when the driver brakes, so it is only active when in a zone AND not braking (a_x >= 0)."""
+    return zone_drs & (acceleration >= 0.0)
+
+
 def _smooth_array(arr: np.ndarray, window: int = 11) -> np.ndarray:
     """Apply moving average smoothing to an array."""
     if len(arr) < window:
@@ -172,8 +179,7 @@ def run_simulation(
         "mu_weather": mu_weather,
         "interp_stepsize_des": 1.0,
         "curv_filt_width": 10.0,
-        "use_drs1": config["use_drs"],
-        "use_drs2": config["use_drs"],
+        "use_drs": config["use_drs"],
         "use_pit": False,
     }
 
@@ -279,7 +285,7 @@ def run_simulation(
         energy_storage=lap.es_cl[:no_points] / 1000.0,
         fuel_consumed_profile=lap.fuel_cons_cl[:no_points],
         energy_consumed_profile=lap.e_cons_cl[:no_points] / 1000.0,
-        drs=lap.trackobj.drs[:no_points],
+        drs=_compute_effective_drs(lap.trackobj.drs[:no_points], acceleration),
         time=lap.t_cl[:no_points],
         friction=lap.trackobj.mu[:no_points],
         e_motor_power=2 * np.pi * lap.n_cl[:no_points] * lap.m_e_motor[:no_points] / 1000.0,
@@ -381,7 +387,7 @@ def run_simulation_advanced(
         energy_storage=lap.es_cl[:no_points] / 1000.0,
         fuel_consumed_profile=lap.fuel_cons_cl[:no_points],
         energy_consumed_profile=lap.e_cons_cl[:no_points] / 1000.0,
-        drs=lap.trackobj.drs[:no_points],
+        drs=_compute_effective_drs(lap.trackobj.drs[:no_points], acceleration),
         time=lap.t_cl[:no_points],
         friction=lap.trackobj.mu[:no_points],
         e_motor_power=2 * np.pi * lap.n_cl[:no_points] * lap.m_e_motor[:no_points] / 1000.0,

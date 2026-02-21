@@ -137,8 +137,7 @@ def main(
         track_opts["mu_weather"],
         track_opts["interp_stepsize_des"],
         track_opts["curv_filt_width"],
-        track_opts["use_drs1"],
-        track_opts["use_drs2"],
+        track_opts["use_drs"],
         track_opts["use_pit"],
         vel_lim_glob,
         driver_opts["yellow_s1"],
@@ -444,8 +443,7 @@ if __name__ == "__main__":
     # mu_weather:           [-] factor to consider wet track, e.g. by mu_weather = 0.6
     # interp_stepsize_des:  [m], desired stepsize after interpolation of the input raceline points
     # curv_filt_width:      [m] window width of moving average filter -> set None for deactivation
-    # use_drs1:             DRS zone 1 switch
-    # use_drs2:             DRS zone 2 switch
+    # use_drs:              DRS / active aero zones switch (enables all zones defined in track_pars.ini)
     # use_pit:              activate pit stop (requires _pit track file!)
 
     track_opts_ = {
@@ -454,8 +452,7 @@ if __name__ == "__main__":
         "mu_weather": 1.0,
         "interp_stepsize_des": 1.0,
         "curv_filt_width": 10.0,
-        "use_drs1": True,
-        "use_drs2": True,
+        "use_drs": True,
         "use_pit": False,
     }
 

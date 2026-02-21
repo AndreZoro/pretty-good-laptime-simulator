@@ -39,7 +39,8 @@ def get_viz_options(result: SimulationResult) -> dict:
     if result.energy_consumed_profile is not None:
         options["Energy Consumed"] = {"data": result.energy_consumed_profile, "unit": "kJ", "colorscale": "Reds"}
     if result.drs is not None:
-        options["DRS"] = {"data": result.drs.astype(float), "unit": "", "colorscale": "Picnic"}
+        drs_label = "Active Aero" if "2026" in result.vehicle else "DRS"
+        options[drs_label] = {"data": result.drs.astype(float), "unit": "", "colorscale": "Picnic"}
     if result.friction is not None:
         options["Friction"] = {"data": result.friction, "unit": "μ", "colorscale": "Greens"}
     if result.e_motor_power is not None:
