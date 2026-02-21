@@ -4,10 +4,14 @@ Simple Simulation Page
 Basic lap time simulation with minimal configuration options.
 """
 
-import streamlit as st
 import numpy as np
+import streamlit as st
 
-from helpers.simulation import run_simulation, get_available_tracks, get_available_vehicles
+from helpers.simulation import (
+    get_available_tracks,
+    get_available_vehicles,
+    run_simulation,
+)
 from helpers.visualization import render_simulation_plots
 
 st.set_page_config(
@@ -34,7 +38,7 @@ available_tracks = get_available_tracks()
 track = st.sidebar.selectbox(
     "Track",
     options=available_tracks,
-    index=available_tracks.index("Shanghai") if "Shanghai" in available_tracks else 0,
+    index=available_tracks.index("Spa") if "Spa" in available_tracks else 0,
 )
 
 # Vehicle selection
@@ -42,7 +46,7 @@ available_vehicles = get_available_vehicles()
 vehicle = st.sidebar.selectbox(
     "Vehicle",
     options=available_vehicles,
-    index=available_vehicles.index("F1_Shanghai") if "F1_Shanghai" in available_vehicles else 0,
+    index=available_vehicles.index("F1_2025") if "F1_2025" in available_vehicles else 0,
 )
 
 # Weather condition
@@ -61,7 +65,9 @@ weather_desc = "Dry" if mu_weather >= 0.95 else "Damp" if mu_weather >= 0.75 els
 st.sidebar.caption(f"Conditions: **{weather_desc}**")
 
 # Run button
-run_button = st.sidebar.button("🚀 Run Simulation", type="primary", use_container_width=True)
+run_button = st.sidebar.button(
+    "🚀 Run Simulation", type="primary", use_container_width=True
+)
 
 # Show current config
 st.sidebar.divider()
@@ -118,15 +124,19 @@ if st.session_state.simple_result is not None:
     with col3:
         st.metric("Energy Used", f"{result.energy_consumed:.1f} kJ")
 
-
     # Render profile chart and track map
     render_simulation_plots(result, key_prefix="simple_")
 
 else:
     # Initial state - show instructions
-    st.info("👈 Configure parameters in the sidebar and click **Run Simulation** to start.")
+    st.info(
+        "👈 Configure parameters in the sidebar and click **Run Simulation** to start."
+    )
 
-    e_col1, e_col2, = st.columns(2)
+    (
+        e_col1,
+        e_col2,
+    ) = st.columns(2)
 
     with e_col1:
         st.markdown("""

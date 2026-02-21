@@ -5,8 +5,8 @@ Determine vehicle aerodynamic parameters and weight from sector times and max ve
 Uses 4 targets (S1, S2, S3, v_max) to identify 4 parameters (drag, downforce, mass, power).
 """
 
-import configparser
 import ast
+import configparser
 import os
 import time
 
@@ -686,7 +686,7 @@ vehicle_base = st.sidebar.selectbox(
 st.sidebar.header("Target Source")
 target_source = st.sidebar.radio(
     "Source",
-    options=["Manual", "FastF1 Telemetry"],
+    options=["FastF1 Telemetry", "Manual"],
     horizontal=True,
     help="Manual: enter sector times + v_max. FastF1: download real telemetry speed traces.",
 )

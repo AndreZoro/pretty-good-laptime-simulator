@@ -4,12 +4,12 @@ Advanced Simulation Page
 Full control over all simulation parameters.
 """
 
+import ast
+import configparser
+import os
+
 import numpy as np
 import streamlit as st
-
-import configparser
-import ast
-import os
 
 from helpers.simulation import (
     get_available_tracks,
@@ -47,7 +47,7 @@ available_tracks = get_available_tracks()
 track_name = st.sidebar.selectbox(
     "Track",
     options=available_tracks,
-    index=available_tracks.index("Shanghai") if "Shanghai" in available_tracks else 0,
+    index=available_tracks.index("Spa") if "Spa" in available_tracks else 0,
     key="adv_track",
 )
 
@@ -89,16 +89,16 @@ available_vehicles = get_available_vehicles() + ["Custom"]
 vehicle = st.sidebar.selectbox(
     "Vehicle Configuration",
     options=available_vehicles,
-    index=available_vehicles.index("F1_Shanghai")
-    if "F1_Shanghai" in available_vehicles
-    else 0,
+    index=available_vehicles.index("F1_2025") if "F1_2025" in available_vehicles else 0,
 )
 
 # Read powertrain_type from selected vehicle INI (needed for conditional UI)
 _powertrain_type = "hybrid"  # default for Custom
 if vehicle != "Custom":
     _repo_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    _ini_path = os.path.join(_repo_path, "laptimesim", "input", "vehicles", f"{vehicle}.ini")
+    _ini_path = os.path.join(
+        _repo_path, "laptimesim", "input", "vehicles", f"{vehicle}.ini"
+    )
     _parser = configparser.ConfigParser()
     _parser.read(_ini_path)
     _veh_pars = ast.literal_eval(_parser.get("VEH_PARS", "veh_pars"))
@@ -372,7 +372,9 @@ if vehicle == "Custom":
         )
 
 with st.sidebar.expander("DRS / Active Aero Options"):
-    use_drs = st.checkbox("Enable DRS / Active Aero Zones", value=(_powertrain_type != "electric"))
+    use_drs = st.checkbox(
+        "Enable DRS / Active Aero Zones", value=(_powertrain_type != "electric")
+    )
 
 use_pit = st.sidebar.checkbox("Use Pit Lane", value=False)
 
@@ -422,7 +424,8 @@ em_strategy = st.sidebar.selectbox(
     help="FCFB=First Come First Boost, LBP=Longest to Breakpoint, LS=Lowest Speed",
 )
 
-from helpers.simulation import VEHICLE_DEFAULTS, DEFAULT_VEHICLE
+from helpers.simulation import DEFAULT_VEHICLE, VEHICLE_DEFAULTS
+
 default_energy = VEHICLE_DEFAULTS.get(vehicle, DEFAULT_VEHICLE)["initial_energy"]
 initial_energy_mj = st.sidebar.slider(
     "Initial Energy [MJ]",
