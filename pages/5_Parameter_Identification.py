@@ -1727,7 +1727,7 @@ else:
         )
 
     st.info(
-        "Select a track, vehicle, enter target sector times (or download FastF1 telemetry), then click **Find Parameters**."
+        "Select a track, vehicle, download FastF1 telemetry (or enter target sector times), then click **Find Parameters**."
     )
 
     col1, col2 = st.columns(2)
@@ -1746,17 +1746,17 @@ else:
         - Engine power (pow_max)
 
         **Target modes:**
-        - **Manual:** 3 sector times + max velocity (4 constraints)
         - **FastF1 Telemetry:** Full speed trace from real F1 data (hundreds of constraints)
+        - **Manual:** 3 sector times + max velocity (4 constraints)
         """)
 
     with col2:
         st.markdown("""
         ### Tips
 
-        - Use realistic sector times for the selected track
-        - Adjust parameter bounds if the optimization struggles
-        - The optimization runs multiple simulations, so it may take a few minutes
         - **FastF1 mode** uses the full speed trace as objective (RMSE in m/s),
           capturing braking zones, apex speeds, and straights
+        - Or use realistic sector times for the selected track
+        - Adjust parameter bounds if the optimization struggles
+        - The optimization runs multiple simulations, so it may take a few minutes
         """)
