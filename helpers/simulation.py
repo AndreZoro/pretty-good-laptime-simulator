@@ -97,7 +97,8 @@ class SimulationResult:
     energy_storage: Optional[np.ndarray] = None  # Battery/ERS state [kJ]
     fuel_consumed_profile: Optional[np.ndarray] = None  # Cumulative fuel [kg]
     energy_consumed_profile: Optional[np.ndarray] = None  # Cumulative energy [kJ]
-    drs: Optional[np.ndarray] = None  # DRS active flag
+    drs: Optional[np.ndarray] = None  # DRS / active aero flag
+    active_aero: bool = False  # True if vehicle uses active aero (downforce reduction in zones)
     time: Optional[np.ndarray] = None  # Cumulative time [s]
     friction: Optional[np.ndarray] = None  # Track friction coefficient
     e_motor_power: Optional[np.ndarray] = None  # E-motor power [kW], negative = harvest
@@ -290,6 +291,7 @@ def run_simulation(
         friction=lap.trackobj.mu[:no_points],
         e_motor_power=2 * np.pi * lap.n_cl[:no_points] * lap.m_e_motor[:no_points] / 1000.0,
         harvest_power=lap.e_rec_e_motor[:no_points] / np.diff(lap.t_cl[:no_points + 1]) / 1000.0,
+        active_aero="active_aero_dz_f" in lap.driverobj.carobj.pars_general,
     )
 
 
@@ -392,4 +394,5 @@ def run_simulation_advanced(
         friction=lap.trackobj.mu[:no_points],
         e_motor_power=2 * np.pi * lap.n_cl[:no_points] * lap.m_e_motor[:no_points] / 1000.0,
         harvest_power=lap.e_rec_e_motor[:no_points] / np.diff(lap.t_cl[:no_points + 1]) / 1000.0,
+        active_aero="active_aero_dz_f" in lap.driverobj.carobj.pars_general,
     )

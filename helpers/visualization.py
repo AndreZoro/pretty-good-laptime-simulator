@@ -39,7 +39,7 @@ def get_viz_options(result: SimulationResult) -> dict:
     if result.energy_consumed_profile is not None:
         options["Energy Consumed"] = {"data": result.energy_consumed_profile, "unit": "kJ", "colorscale": "Reds"}
     if result.drs is not None:
-        drs_label = "Active Aero" if "2026" in result.vehicle else "DRS"
+        drs_label = "Active Aero" if result.active_aero else "DRS"
         options[drs_label] = {"data": result.drs.astype(float), "unit": "", "colorscale": "Picnic"}
     if result.friction is not None:
         options["Friction"] = {"data": result.friction, "unit": "μ", "colorscale": "Greens"}
@@ -89,8 +89,12 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
 
     with col_track:
         st.header("Track Map")
+        # Downsample to ~10 m resolution for rendering performance
+        n_pts = len(result.track_x)
+        step_m = result.distance[-1] / n_pts if n_pts > 1 else 1.0
+        ds = max(1, round(10.0 / step_m))
         fig_track = create_track_map(
-            result.track_x, result.track_y, data_normalized, viz_colorscale
+            result.track_x[::ds], result.track_y[::ds], data_normalized[::ds], viz_colorscale
         )
         st.plotly_chart(fig_track, width="stretch")
 
