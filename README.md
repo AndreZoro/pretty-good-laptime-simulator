@@ -14,7 +14,7 @@ have also been downloaded into this new repo:
 - [x] Add posibilities to include various other car concepts  
 - [ ] Add more adaptive features such as advanced aero, ride height, boost features
 - [ ] Make optimized strategies for such advanced vehicles when use of devices is limited
-- [ ] Pure drag racing mode
+- [x] Pure drag racing mode
 - [x] Add Streamlit UI  
 - [x] Host on [Streamlit](https://pretty-decent-laptime-simulator.streamlit.app)  
 - [x] Use in reverse to understand performance metrics of real world cars  

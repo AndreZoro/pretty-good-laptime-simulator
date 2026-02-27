@@ -16,8 +16,29 @@ import main_laptimesim
 # Drag test helpers
 # ---------------------------------------------------------------------------
 
-def _load_car(vehicle: str):
-    """Instantiate a Car object from a vehicle .ini filename (without extension)."""
+def read_vehicle_params(vehicle: str) -> dict:
+    """Return the raw params dict from a vehicle .ini file (no unit conversions applied)."""
+    import ast as _ast
+    import configparser as _cp
+
+    repo_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    veh_path = os.path.join(repo_path, "laptimesim", "input", "vehicles", f"{vehicle}.ini")
+    cfg = _cp.ConfigParser()
+    cfg.read(veh_path)
+    return _ast.literal_eval(cfg.get("VEH_PARS", "veh_pars"))
+
+
+def _load_car(vehicle: str, custom_pars: dict = None):
+    """Instantiate a Car object from a vehicle .ini file or a custom params dict."""
+    if custom_pars is not None:
+        pt = custom_pars["powertrain_type"]
+        if pt == "electric":
+            from laptimesim.src.car_electric import CarElectric
+            return CarElectric(pars_veh=custom_pars)
+        else:
+            from laptimesim.src.car_hybrid import CarHybrid
+            return CarHybrid(pars_veh=custom_pars)
+
     import ast as _ast
     import configparser as _cp
 
@@ -36,7 +57,8 @@ def _load_car(vehicle: str):
         return CarHybrid(parfilepath=veh_path)
 
 
-def run_drag_simulation(vehicle: str, mu: float = 1.0, dt: float = 0.001) -> dict:
+def run_drag_simulation(vehicle: str, mu: float = 1.0, dt: float = 0.001,
+                        custom_pars: dict = None) -> dict:
     """
     Run a standing-start drag test simulation.
 
@@ -50,11 +72,11 @@ def run_drag_simulation(vehicle: str, mu: float = 1.0, dt: float = 0.001) -> dic
     """
     from laptimesim.src.drag_test import run_drag_test, DRAG_DISTANCES
 
-    car = _load_car(vehicle)
+    car = _load_car(vehicle, custom_pars=custom_pars)
     max_dist = max(DRAG_DISTANCES.values())
     result = run_drag_test(car, distance_m=max_dist, mu=mu, dt=dt)
 
-    # Determine total power for display
+    # Determine total power for display (read from car after construction)
     eng = car.pars_engine
     if "pow_e_motor_f" in eng:
         power_kw = (eng["pow_e_motor_f"] + eng["pow_e_motor_r"]) / 1000.0
