@@ -12,6 +12,68 @@ from typing import Optional
 import main_laptimesim
 
 
+# ---------------------------------------------------------------------------
+# Drag test helpers
+# ---------------------------------------------------------------------------
+
+def _load_car(vehicle: str):
+    """Instantiate a Car object from a vehicle .ini filename (without extension)."""
+    import ast as _ast
+    import configparser as _cp
+
+    repo_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    veh_path = os.path.join(repo_path, "laptimesim", "input", "vehicles", f"{vehicle}.ini")
+
+    cfg = _cp.ConfigParser()
+    cfg.read(veh_path)
+    pars = _ast.literal_eval(cfg.get("VEH_PARS", "veh_pars"))
+
+    if pars["powertrain_type"] == "electric":
+        from laptimesim.src.car_electric import CarElectric
+        return CarElectric(parfilepath=veh_path)
+    else:
+        from laptimesim.src.car_hybrid import CarHybrid
+        return CarHybrid(parfilepath=veh_path)
+
+
+def run_drag_simulation(vehicle: str, mu: float = 1.0, dt: float = 0.001) -> dict:
+    """
+    Run a standing-start drag test simulation.
+
+    Returns a dict with:
+        result  : raw arrays from run_drag_test (t, vel, dist, gear, a_x)
+        vehicle : vehicle name string
+        series  : series name from engine parameters
+        mu      : friction coefficient used
+        mass_kg : vehicle mass [kg]
+        power_kw: total motor power [kW] (electric) or combined (hybrid)
+    """
+    from laptimesim.src.drag_test import run_drag_test, DRAG_DISTANCES
+
+    car = _load_car(vehicle)
+    max_dist = max(DRAG_DISTANCES.values())
+    result = run_drag_test(car, distance_m=max_dist, mu=mu, dt=dt)
+
+    # Determine total power for display
+    eng = car.pars_engine
+    if "pow_e_motor_f" in eng:
+        power_kw = (eng["pow_e_motor_f"] + eng["pow_e_motor_r"]) / 1000.0
+    elif "pow_e_motor" in eng:
+        power_kw = eng["pow_e_motor"] / 1000.0
+    else:
+        power_kw = eng.get("pow_max", 0.0) / 1000.0
+
+    return {
+        "result":   result,
+        "vehicle":  vehicle,
+        "series":   eng.get("series", "Unknown"),
+        "mu":       mu,
+        "mass_kg":  car.pars_general["m"],
+        "power_kw": power_kw,
+        "topology": eng.get("topology", "RWD"),
+    }
+
+
 
 def _compute_effective_drs(zone_drs: np.ndarray, acceleration: np.ndarray) -> np.ndarray:
     """Return boolean array where DRS/active aero was actually open.
