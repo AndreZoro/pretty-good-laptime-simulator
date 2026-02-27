@@ -70,14 +70,30 @@ class CarElectric(Car):
     # ------------------------------------------------------------------------------------------------------------------
 
     def torque_e_motor(self, n: float) -> float:
-        """Rev input in 1/s. Output is the maximum torque in Nm."""
+        """Rev input in 1/s. Output is the maximum combined torque in Nm.
 
-        torque_tmp = self.pars_engine["pow_e_motor"] / (2 * math.pi * n)
+        Supports two configurations:
+        - Single motor: uses 'pow_e_motor' and 'torque_e_motor_max'.
+        - Dual motor (AWD): uses 'pow_e_motor_f'/'pow_e_motor_r' and
+          'torque_e_motor_max_f'/'torque_e_motor_max_r'. Each motor's torque
+          is limited individually, then summed.
+        """
+        pars = self.pars_engine
+        two_pi_n = 2 * math.pi * n
 
-        if torque_tmp > self.pars_engine["torque_e_motor_max"]:
-            torque_tmp = self.pars_engine["torque_e_motor_max"]
-
-        return torque_tmp
+        if "pow_e_motor_f" in pars:
+            torque_f = pars["pow_e_motor_f"] / two_pi_n
+            if torque_f > pars["torque_e_motor_max_f"]:
+                torque_f = pars["torque_e_motor_max_f"]
+            torque_r = pars["pow_e_motor_r"] / two_pi_n
+            if torque_r > pars["torque_e_motor_max_r"]:
+                torque_r = pars["torque_e_motor_max_r"]
+            return torque_f + torque_r
+        else:
+            torque_tmp = pars["pow_e_motor"] / two_pi_n
+            if torque_tmp > pars["torque_e_motor_max"]:
+                torque_tmp = pars["torque_e_motor_max"]
+            return torque_tmp
 
     def e_cons(self, t_cl: np.ndarray, n_cl: np.ndarray, m_e_motor: np.ndarray) -> np.ndarray:
         """Rev input in 1/s, torque input in Nm. Output is the consumed energy in J until the current point(closed).
