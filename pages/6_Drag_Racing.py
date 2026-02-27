@@ -1,5 +1,5 @@
 """
-Drag Test Page
+Drag Racing Page
 
 Standing-start acceleration simulation for 1/8 mile, 1/4 mile and 1 km.
 """
@@ -13,12 +13,12 @@ from helpers.simulation import get_available_vehicles, run_drag_simulation
 from laptimesim.src.drag_test import DRAG_DISTANCES
 
 st.set_page_config(
-    page_title="Drag Test - Laptime Sim",
+    page_title="Drag Racing - Pretty Decent Straight Line Sim",
     page_icon="🏁",
     layout="wide",
 )
 
-st.title("🏁 Drag Test")
+st.title("🏁 Drag Racing")
 st.caption("Standing-start acceleration simulation — 1/8 mile · 1/4 mile · 1 km")
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -71,7 +71,7 @@ grip_label = (
 )
 st.sidebar.caption(f"Conditions: **{grip_label}**")
 
-run_btn = st.sidebar.button("🚀 Run Drag Test", type="primary", use_container_width=True)
+run_btn = st.sidebar.button("🚀 Run Drag Pull", type="primary", use_container_width=True)
 
 st.sidebar.divider()
 
@@ -325,7 +325,7 @@ if st.session_state.drag_result is not None:
 
 else:
     # Empty state
-    st.info("👈 Select a vehicle in the sidebar and click **Run Drag Test** to start.")
+    st.info("👈 Select a vehicle in the sidebar and click **Run Drag Pull** to start.")
 
     col1, col2 = st.columns(2)
     with col1:
