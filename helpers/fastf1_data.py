@@ -47,7 +47,7 @@ def setup_cache():
 
 def get_available_years():
     """Return list of years with F1 data available via FastF1."""
-    return list(range(2018, 2026))
+    return list(range(2018, 2027))
 
 
 def get_available_gps(sim_tracks: list[str]) -> dict[str, str]:

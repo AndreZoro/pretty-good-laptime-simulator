@@ -179,6 +179,17 @@ def main(track_pars: dict,
         calc_splines(path=refpath_interp_cl,
                      use_dist_scaling=True)
 
+    # calculate spline lengths, heading, curvature, and curvature derivative (required by iqp_handler)
+    spline_len_interp = tph.calc_spline_lengths.calc_spline_lengths(coeffs_x=coeffs_x_interp,
+                                                                    coeffs_y=coeffs_y_interp)
+
+    psi_interp, kappa_interp, dkappa_interp = tph.calc_head_curv_an.calc_head_curv_an(
+        coeffs_x=coeffs_x_interp,
+        coeffs_y=coeffs_y_interp,
+        ind_spls=np.arange(track_interp.shape[0]),
+        t_spls=np.zeros(track_interp.shape[0]),
+        calc_dcurv=True)
+
     # ------------------------------------------------------------------------------------------------------------------
     # PLOT TRACK INCLUDING TRACK BOUNDARIES ----------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
@@ -205,10 +216,14 @@ def main(track_pars: dict,
     # CALL OPTIMIZATION ------------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
 
-    alpha_opt, track_interp, normvec_normalized_interp = tph.iqp_handler.\
+    alpha_opt, track_interp, normvec_normalized_interp, _, _, _, _ = tph.iqp_handler.\
         iqp_handler(reftrack=track_interp,
                     normvectors=normvec_normalized_interp,
                     A=a_interp,
+                    spline_len=spline_len_interp,
+                    psi=psi_interp,
+                    kappa=kappa_interp,
+                    dkappa=dkappa_interp,
                     kappa_bound=optim_opts_mincurv["curvlim"],
                     w_veh=optim_opts_mincurv["width_opt"],
                     print_debug=True,
@@ -312,9 +327,13 @@ if __name__ == '__main__':
 
     # F1 ---------------------------------------------------------------------------------------------------------------
 
-    track_pars_ = {"location": "Austin",
-                   "track_length": 5513.0,
-                   "track_width": None}
+    track_pars_ = {"location": "Melbourne_2026",
+                   "track_length": 5278.0,
+                   "track_width": 14.0}
+
+    # track_pars_ = {"location": "Austin",
+    #                "track_length": 5513.0,
+    #                "track_width": None}
 
     # track_pars_ = {"location": "Budapest",
     #                "track_length": 4381.0,
@@ -429,7 +448,7 @@ if __name__ == '__main__':
     # new_start:        [x_m, y_m] coordinates of new starting point
     # plot_track:       plot imported as well as smoothed track
 
-    imp_opts_ = {"mode": "track",
+    imp_opts_ = {"mode": "centerline",
                  "flip_imp_track": False,
                  "set_new_start": True,
                  "new_start": [0.0, 0.0],
