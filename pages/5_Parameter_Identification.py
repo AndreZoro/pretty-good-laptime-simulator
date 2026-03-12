@@ -115,6 +115,8 @@ def run_sim_with_params(
     c_z_a_total: float,
     mass: float,
     pow_max: float,
+    mu_weather: float = 1.0,
+    em_strategy: str = "ERSO",
 ):
     """Run simulation with given parameters and return sector times and max velocity."""
     vehicle_pars = build_vehicle_pars(base_config, c_w_a, c_z_a_total, mass, pow_max)
@@ -123,7 +125,7 @@ def run_sim_with_params(
     track_opts = {
         "trackname": track,
         "flip_track": False,
-        "mu_weather": 1.0,
+        "mu_weather": mu_weather,
         "interp_stepsize_des": 30.0,  # Large step = fast
         "curv_filt_width": 60.0,  # Must result in odd window size (60/30 + 1 = 3)
         "use_drs": True,
@@ -149,9 +151,9 @@ def run_sim_with_params(
         "yellow_s3": False,
         "yellow_throttle": 0.3,
         "initial_energy": 4.0e6,
-        "em_strategy": "FCFB",
+        "em_strategy": em_strategy,
         "use_recuperation": True,
-        "use_lift_coast": False,
+        "use_lift_coast": True,
         "lift_coast_dist": 10.0,
     }
 
@@ -181,6 +183,8 @@ def run_grid_search(
     power_step=10e3,
     ref_distance=None,
     ref_velocity=None,
+    mu_weather=1.0,
+    em_strategy="ERSO",
 ):
     """
     Run a coarse grid search to find approximate best parameters.
@@ -222,7 +226,8 @@ def run_grid_search(
 
                         sectors, lap_time, v_max, sim_dist, sim_vel = (
                             run_sim_with_params(
-                                track, base_config, c_w_a, c_z_a, mass, pow_max
+                                track, base_config, c_w_a, c_z_a, mass, pow_max,
+                                mu_weather=mu_weather, em_strategy=em_strategy,
                             )
                         )
                         elapsed = time.time() - start
@@ -290,6 +295,8 @@ def run_nelder_mead(
     log_container,
     ref_distance=None,
     ref_velocity=None,
+    mu_weather=1.0,
+    em_strategy="ERSO",
 ):
     """
     Run Nelder-Mead optimization starting from an initial guess.
@@ -332,7 +339,8 @@ def run_nelder_mead(
 
         start = time.time()
         sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
-            track, base_config, c_w_a, c_z_a_total, mass, pow_max
+            track, base_config, c_w_a, c_z_a_total, mass, pow_max,
+            mu_weather=mu_weather, em_strategy=em_strategy,
         )
         elapsed = time.time() - start
 
@@ -386,7 +394,8 @@ def run_nelder_mead(
         pow_max = np.clip(result.x[3], pow_max_bounds[0], pow_max_bounds[1])
 
         sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
-            track, base_config, c_w_a, c_z_a_total, mass, pow_max
+            track, base_config, c_w_a, c_z_a_total, mass, pow_max,
+            mu_weather=mu_weather, em_strategy=em_strategy,
         )
 
         return (
@@ -412,6 +421,8 @@ def run_trust_constr(
     log_container,
     ref_distance=None,
     ref_velocity=None,
+    mu_weather=1.0,
+    em_strategy="ERSO",
 ):
     """
     Run Trust-Region Constrained optimization starting from an initial guess.
@@ -465,7 +476,8 @@ def run_trust_constr(
 
         start = time.time()
         sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
-            track, base_config, c_w_a, c_z_a_total, mass, pow_max
+            track, base_config, c_w_a, c_z_a_total, mass, pow_max,
+            mu_weather=mu_weather, em_strategy=em_strategy,
         )
         elapsed = time.time() - start
 
@@ -517,7 +529,8 @@ def run_trust_constr(
         real_params = to_real(result.x)
         c_w_a, c_z_a_total, mass, pow_max = real_params
         sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
-            track, base_config, c_w_a, c_z_a_total, mass, pow_max
+            track, base_config, c_w_a, c_z_a_total, mass, pow_max,
+            mu_weather=mu_weather, em_strategy=em_strategy,
         )
 
         return (
@@ -543,6 +556,8 @@ def run_lbfgsb(
     log_container,
     ref_distance=None,
     ref_velocity=None,
+    mu_weather=1.0,
+    em_strategy="ERSO",
 ):
     """
     Run L-BFGS-B optimization starting from an initial guess.
@@ -596,7 +611,8 @@ def run_lbfgsb(
 
         start = time.time()
         sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
-            track, base_config, c_w_a, c_z_a_total, mass, pow_max
+            track, base_config, c_w_a, c_z_a_total, mass, pow_max,
+            mu_weather=mu_weather, em_strategy=em_strategy,
         )
         elapsed = time.time() - start
 
@@ -648,7 +664,8 @@ def run_lbfgsb(
         real_params = to_real(result.x)
         c_w_a, c_z_a_total, mass, pow_max = real_params
         sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
-            track, base_config, c_w_a, c_z_a_total, mass, pow_max
+            track, base_config, c_w_a, c_z_a_total, mass, pow_max,
+            mu_weather=mu_weather, em_strategy=em_strategy,
         )
 
         return (
@@ -680,7 +697,13 @@ available_vehicles = get_available_vehicles()
 vehicle_base = st.sidebar.selectbox(
     "Base Vehicle",
     options=available_vehicles,
+    index=available_vehicles.index("F1_2026") if "F1_2026" in available_vehicles else 0,
 )
+
+# Simulation settings
+st.sidebar.header("Simulation Settings")
+
+
 
 # Target source toggle
 st.sidebar.header("Target Source")
@@ -712,7 +735,7 @@ if target_source == "FastF1 Telemetry":
         # Sync track selection with FastF1 track
         track = ff1_track
 
-        ff1_year = st.sidebar.selectbox("Year", options=get_available_years(), index=7)
+        ff1_year = st.sidebar.selectbox("Year", options=get_available_years(), index=8)
         ff1_session = st.sidebar.radio(
             "Session",
             options=["Q", "R"],
@@ -838,20 +861,36 @@ if target_source == "Manual":
     target_v_max_ms = target_v_max / 3.6  # Convert to m/s
 
 st.sidebar.header("Search Method")
-search_method = st.sidebar.radio(
+search_method = st.sidebar.selectbox(
     "Method",
     options=["Trust-Constr", "L-BFGS-B", "Grid Search", "Nelder-Mead"],
-    horizontal=True,
+    # horizontal=True,
     help="Trust-Constr: bounded optimizer. L-BFGS-B: fast gradient-based. Grid Search: tests all combinations. Nelder-Mead: derivative-free local optimizer.",
 )
 
 st.sidebar.header("Parameter Bounds")
 
+mu_weather = st.sidebar.slider(
+    "Tire Grip (mu)",
+    min_value=0.6,
+    max_value=1.4,
+    value=1.0,
+    step=0.05,
+    help="Track grip multiplier: 1.0 = dry, 0.8 = damp, 0.6 = wet",
+)
+
+em_strategy = st.sidebar.selectbox(
+    "Energy Strategy",
+    options=["ERSO", "FCFB", "LBP", "LS", "NONE"],
+    index=0,
+    help="ERSO: energy-recuperation strategy optimizer. FCFB: full charge full boost. LBP: lap-based planning. LS: lift-and-coast strategy. NONE: no strategy.",
+)
+
 with st.sidebar.expander("Aerodynamics Bounds"):
     # Default bounds: ±10% of MVRC_2026 values (c_w_a=1.56, c_z_a_total=4.88)
-    c_w_a_min = st.number_input("Drag min [m²]", value=1.00, step=0.2)
+    c_w_a_min = st.number_input("Drag min [m²]", value=0.60, step=0.2)
     c_w_a_max = st.number_input("Drag max [m²]", value=1.80, step=0.2)
-    c_z_a_total_min = st.number_input("Total Downforce min [m²]", value=4.4, step=0.2)
+    c_z_a_total_min = st.number_input("Total Downforce min [m²]", value=3.6, step=0.2)
     c_z_a_total_max = st.number_input("Total Downforce max [m²]", value=5.4, step=0.2)
 
 with st.sidebar.expander("Mass Bounds"):
@@ -862,7 +901,7 @@ with st.sidebar.expander("Mass Bounds"):
 with st.sidebar.expander("Power Bounds"):
     # Default bounds: ±10% of MVRC_2026 value (pow_max=575e3)
     pow_max_min = (
-        st.number_input("Power min [kW]", value=520.0, step=10.0) * 1e3
+        st.number_input("Power min [kW]", value=360.0, step=10.0) * 1e3
     )  # Convert to W
     pow_max_max = (
         st.number_input("Power max [kW]", value=600.0, step=10.0) * 1e3
@@ -903,10 +942,11 @@ if run_button:
         (pow_max_min + pow_max_max) / 2,
     ]
 
-    # Common optimizer kwargs for trace mode
-    trace_kwargs = {}
+    # Common optimizer kwargs
+    trace_kwargs = {"mu_weather": mu_weather, "em_strategy": em_strategy}
     if use_trace_mode:
-        trace_kwargs = {"ref_distance": ref_distance, "ref_velocity": ref_velocity}
+        trace_kwargs["ref_distance"] = ref_distance
+        trace_kwargs["ref_velocity"] = ref_velocity
 
     aborted = False
     best_params = None
