@@ -327,9 +327,9 @@ if __name__ == '__main__':
 
     # F1 ---------------------------------------------------------------------------------------------------------------
 
-    track_pars_ = {"location": "Melbourne_2026",
-                   "track_length": 5278.0,
-                   "track_width": 14.0}
+    track_pars_ = {"location": "Shanghai_2026",
+                   "track_length": 5451.0,
+                   "track_width": 15.0}
 
     # track_pars_ = {"location": "Austin",
     #                "track_length": 5513.0,
