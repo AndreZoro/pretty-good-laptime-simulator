@@ -16,6 +16,9 @@ import plotly.express as px
 
 _PLOTLY_JS: str | None = None
 
+# Matches the profile chart's blue fill gradient (dark → #1f77b4)
+_BLUE_GRADIENT = [[0, "#061626"], [0.5, "#0f3d6b"], [1, "#1f77b4"]]
+
 
 def _get_plotly_js() -> str:
     global _PLOTLY_JS
@@ -31,38 +34,39 @@ from helpers.simulation import SimulationResult
 def get_viz_options(result: SimulationResult) -> dict:
     """Get available visualization options for a simulation result."""
     G = 9.81  # m/s²
+    cs = _BLUE_GRADIENT
     options = {
-        "Velocity": {"data": result.velocity_kmh, "unit": "km/h", "colorscale": "RdYlGn"},
-        "Acceleration": {"data": result.acceleration / G, "unit": "g", "colorscale": "RdBu_r"},
-        "Lateral Acceleration": {"data": result.lat_acceleration / G, "unit": "g", "colorscale": "Viridis"},
-        "Curvature": {"data": np.abs(result.curvature), "unit": "rad/m", "colorscale": "Plasma"},
-        "Gear": {"data": result.gear.astype(float), "unit": "", "colorscale": "Turbo"},
+        "Velocity": {"data": result.velocity_kmh, "unit": "km/h", "colorscale": cs},
+        "Acceleration": {"data": result.acceleration / G, "unit": "g", "colorscale": cs},
+        "Lateral Acceleration": {"data": result.lat_acceleration / G, "unit": "g", "colorscale": cs},
+        "Curvature": {"data": np.abs(result.curvature), "unit": "rad/m", "colorscale": cs},
+        "Gear": {"data": result.gear.astype(float), "unit": "", "colorscale": cs},
     }
 
     if result.rpm is not None:
-        options["RPM"] = {"data": result.rpm, "unit": "rpm", "colorscale": "Inferno"}
+        options["RPM"] = {"data": result.rpm, "unit": "rpm", "colorscale": cs}
     if result.engine_torque is not None:
-        options["Engine Torque"] = {"data": result.engine_torque, "unit": "Nm", "colorscale": "Hot"}
+        options["Engine Torque"] = {"data": result.engine_torque, "unit": "Nm", "colorscale": cs}
     if result.e_motor_torque is not None:
-        options["E-Motor Torque"] = {"data": result.e_motor_torque, "unit": "Nm", "colorscale": "Cividis"}
+        options["E-Motor Torque"] = {"data": result.e_motor_torque, "unit": "Nm", "colorscale": cs}
     if result.tire_loads is not None:
         for i, corner in enumerate(["FL", "FR", "RL", "RR"]):
-            options[f"Tire Load {corner}"] = {"data": result.tire_loads[:, i], "unit": "N", "colorscale": "YlOrRd"}
+            options[f"Tire Load {corner}"] = {"data": result.tire_loads[:, i], "unit": "N", "colorscale": cs}
     if result.energy_storage is not None:
-        options["Energy Storage"] = {"data": result.energy_storage, "unit": "kJ", "colorscale": "Blues"}
+        options["Energy Storage"] = {"data": result.energy_storage, "unit": "kJ", "colorscale": cs}
     if result.fuel_consumed_profile is not None:
-        options["Fuel Consumed"] = {"data": result.fuel_consumed_profile, "unit": "kg", "colorscale": "Oranges"}
+        options["Fuel Consumed"] = {"data": result.fuel_consumed_profile, "unit": "kg", "colorscale": cs}
     if result.energy_consumed_profile is not None:
-        options["Energy Consumed"] = {"data": result.energy_consumed_profile, "unit": "kJ", "colorscale": "Reds"}
+        options["Energy Consumed"] = {"data": result.energy_consumed_profile, "unit": "kJ", "colorscale": cs}
     if result.drs is not None:
         drs_label = "Active Aero" if result.active_aero else "DRS"
-        options[drs_label] = {"data": result.drs.astype(float), "unit": "", "colorscale": "Picnic"}
+        options[drs_label] = {"data": result.drs.astype(float), "unit": "", "colorscale": cs}
     if result.friction is not None:
-        options["Friction"] = {"data": result.friction, "unit": "μ", "colorscale": "Greens"}
+        options["Friction"] = {"data": result.friction, "unit": "μ", "colorscale": cs}
     if result.e_motor_power is not None:
-        options["E-Motor Power"] = {"data": result.e_motor_power, "unit": "kW", "colorscale": "RdBu_r"}
+        options["E-Motor Power"] = {"data": result.e_motor_power, "unit": "kW", "colorscale": cs}
     if result.harvest_power is not None:
-        options["Harvest Power"] = {"data": result.harvest_power, "unit": "kW", "colorscale": "Reds"}
+        options["Harvest Power"] = {"data": result.harvest_power, "unit": "kW", "colorscale": cs}
 
     return options
 
