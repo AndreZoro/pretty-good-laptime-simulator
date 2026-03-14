@@ -9,7 +9,7 @@ import main_laptimesim
 def test_laptimesim():
     # user input
     track_opts_ = {
-        "trackname": "Shanghai",
+        "trackname": "Shanghai_pre_2026",
         "flip_track": False,
         "mu_weather": 1.0,
         "interp_stepsize_des": 5.0,
