@@ -9,10 +9,10 @@ import os
 
 import numpy as np
 import plotly
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
-import plotly.graph_objects as go
-import plotly.express as px
 
 _PLOTLY_JS: str | None = None
 
@@ -23,10 +23,13 @@ _BLUE_GRADIENT = [[0, "#061626"], [0.5, "#0f3d6b"], [1, "#1f77b4"]]
 def _get_plotly_js() -> str:
     global _PLOTLY_JS
     if _PLOTLY_JS is None:
-        path = os.path.join(os.path.dirname(plotly.__file__), "package_data", "plotly.min.js")
+        path = os.path.join(
+            os.path.dirname(plotly.__file__), "package_data", "plotly.min.js"
+        )
         with open(path) as f:
             _PLOTLY_JS = f.read()
     return _PLOTLY_JS
+
 
 from helpers.simulation import SimulationResult
 
@@ -37,36 +40,84 @@ def get_viz_options(result: SimulationResult) -> dict:
     cs = _BLUE_GRADIENT
     options = {
         "Velocity": {"data": result.velocity_kmh, "unit": "km/h", "colorscale": cs},
-        "Acceleration": {"data": result.acceleration / G, "unit": "g", "colorscale": cs},
-        "Lateral Acceleration": {"data": result.lat_acceleration / G, "unit": "g", "colorscale": cs},
-        "Curvature": {"data": np.abs(result.curvature), "unit": "rad/m", "colorscale": cs},
+        "Acceleration": {
+            "data": result.acceleration / G,
+            "unit": "g",
+            "colorscale": cs,
+        },
+        "Lateral Acceleration": {
+            "data": result.lat_acceleration / G,
+            "unit": "g",
+            "colorscale": cs,
+        },
+        "Curvature": {
+            "data": np.abs(result.curvature),
+            "unit": "rad/m",
+            "colorscale": cs,
+        },
         "Gear": {"data": result.gear.astype(float), "unit": "", "colorscale": cs},
     }
 
     if result.rpm is not None:
         options["RPM"] = {"data": result.rpm, "unit": "rpm", "colorscale": cs}
     if result.engine_torque is not None:
-        options["Engine Torque"] = {"data": result.engine_torque, "unit": "Nm", "colorscale": cs}
+        options["Engine Torque"] = {
+            "data": result.engine_torque,
+            "unit": "Nm",
+            "colorscale": cs,
+        }
     if result.e_motor_torque is not None:
-        options["E-Motor Torque"] = {"data": result.e_motor_torque, "unit": "Nm", "colorscale": cs}
+        options["E-Motor Torque"] = {
+            "data": result.e_motor_torque,
+            "unit": "Nm",
+            "colorscale": cs,
+        }
     if result.tire_loads is not None:
         for i, corner in enumerate(["FL", "FR", "RL", "RR"]):
-            options[f"Tire Load {corner}"] = {"data": result.tire_loads[:, i], "unit": "N", "colorscale": cs}
+            options[f"Tire Load {corner}"] = {
+                "data": result.tire_loads[:, i],
+                "unit": "N",
+                "colorscale": cs,
+            }
     if result.energy_storage is not None:
-        options["Energy Storage"] = {"data": result.energy_storage, "unit": "kJ", "colorscale": cs}
+        options["Energy Storage"] = {
+            "data": result.energy_storage,
+            "unit": "kJ",
+            "colorscale": cs,
+        }
     if result.fuel_consumed_profile is not None:
-        options["Fuel Consumed"] = {"data": result.fuel_consumed_profile, "unit": "kg", "colorscale": cs}
+        options["Fuel Consumed"] = {
+            "data": result.fuel_consumed_profile,
+            "unit": "kg",
+            "colorscale": cs,
+        }
     if result.energy_consumed_profile is not None:
-        options["Energy Consumed"] = {"data": result.energy_consumed_profile, "unit": "kJ", "colorscale": cs}
+        options["Energy Consumed"] = {
+            "data": result.energy_consumed_profile,
+            "unit": "kJ",
+            "colorscale": cs,
+        }
     if result.drs is not None:
         drs_label = "Active Aero" if result.active_aero else "DRS"
-        options[drs_label] = {"data": result.drs.astype(float), "unit": "", "colorscale": cs}
+        options[drs_label] = {
+            "data": result.drs.astype(float),
+            "unit": "",
+            "colorscale": cs,
+        }
     if result.friction is not None:
         options["Friction"] = {"data": result.friction, "unit": "μ", "colorscale": cs}
     if result.e_motor_power is not None:
-        options["E-Motor Power"] = {"data": result.e_motor_power, "unit": "kW", "colorscale": cs}
+        options["E-Motor Power"] = {
+            "data": result.e_motor_power,
+            "unit": "kW",
+            "colorscale": cs,
+        }
     if result.harvest_power is not None:
-        options["Harvest Power"] = {"data": result.harvest_power, "unit": "kW", "colorscale": cs}
+        options["Harvest Power"] = {
+            "data": result.harvest_power,
+            "unit": "kW",
+            "colorscale": cs,
+        }
 
     return options
 
@@ -112,20 +163,22 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
     y_label = f"{selected_viz} [{viz_unit}]" if viz_unit else selected_viz
     unit_str = f" {viz_unit}" if viz_unit else ""
 
-    payload = json.dumps({
-        "prof_dist": result.distance.tolist(),
-        "prof_data": viz_data.tolist(),
-        "track_x": tx,
-        "track_y": ty,
-        "color_vals": dn,
-        "colorscale": viz_colorscale,
-        "dist": dist,
-        "vd": vd,
-        "viz_name": selected_viz,
-        "y_label": y_label,
-        "unit_str": unit_str,
-        "viz_unit": viz_unit,
-    })
+    payload = json.dumps(
+        {
+            "prof_dist": result.distance.tolist(),
+            "prof_data": viz_data.tolist(),
+            "track_x": tx,
+            "track_y": ty,
+            "color_vals": dn,
+            "colorscale": viz_colorscale,
+            "dist": dist,
+            "vd": vd,
+            "viz_name": selected_viz,
+            "y_label": y_label,
+            "unit_str": unit_str,
+            "viz_unit": viz_unit,
+        }
+    )
 
     html = f"""<!DOCTYPE html>
 <html><head>
@@ -163,10 +216,14 @@ Plotly.newPlot('profile', [{{
   line: {{color: '#1f77b4', width: 2}},
   hovertemplate: '<b>%{{x:.0f}} m</b><br>' + D.viz_name + ': %{{y:.2f}}' + D.unit_str + '<extra></extra>',
 }}], {{
-  xaxis: {{title: 'Distance [m]', showgrid: false, zeroline: false,
+  xaxis: {{title: {{text: 'Distance [m]', font: {{color: '#fff'}}}},
+           tickfont: {{color: '#fff'}},
+           showgrid: false, zeroline: false,
            showspikes: true, spikemode: 'across', spikesnap: 'cursor',
            spikecolor: '#FF6B00', spikethickness: 1, spikedash: 'solid'}},
-  yaxis: {{title: D.y_label, showgrid: true, gridcolor: 'rgba(128,128,128,0.15)', zeroline: false}},
+  yaxis: {{title: {{text: D.y_label, font: {{color: '#fff'}}}},
+           tickfont: {{color: '#fff'}},
+           showgrid: true, gridcolor: 'rgba(128,128,128,0.15)', zeroline: false}},
   hovermode: 'x unified',
   hoverlabel: {{bgcolor: '#FF6B00', font: {{color: 'white'}}, bordercolor: '#FF6B00'}},
   height: 400,
@@ -281,7 +338,9 @@ document.getElementById('trackmap').on('plotly_unhover', function() {{
     components.html(html, height=430)
 
     if viz_unit:
-        st.caption(f"Color: Low ({data_min:.1f} {viz_unit}) → High ({data_max:.1f} {viz_unit})")
+        st.caption(
+            f"Color: Low ({data_min:.1f} {viz_unit}) → High ({data_max:.1f} {viz_unit})"
+        )
     else:
         st.caption(f"Color: Low ({data_min:.0f}) → High ({data_max:.0f})")
 
@@ -307,21 +366,26 @@ def create_profile_chart(
         Plotly Figure object
     """
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=distance,
-        y=data,
-        mode='lines',
-        name=name,
-        line=dict(color='#1f77b4', width=2),
-        fill='tozeroy',
-        fillcolor='rgba(31, 119, 180, 0.2)',
-    ))
+    fig.add_trace(
+        go.Scatter(
+            x=distance,
+            y=data,
+            mode="lines",
+            name=name,
+            line=dict(color="#1f77b4", width=2),
+            fill="tozeroy",
+            fillcolor="rgba(31, 119, 180, 0.2)",
+        )
+    )
 
+    _axis_font = dict(color="#fff")
     y_label = f"{name} [{unit}]" if unit else name
     fig.update_layout(
-        xaxis_title="Distance [m]",
-        yaxis_title=y_label,
-        hovermode='x unified',
+        xaxis=dict(
+            title=dict(text="Distance [m]", font=_axis_font), tickfont=_axis_font
+        ),
+        yaxis=dict(title=dict(text=y_label, font=_axis_font), tickfont=_axis_font),
+        hovermode="x unified",
         height=height,
     )
     return fig
@@ -360,14 +424,16 @@ def create_track_map(
     # Plot track segments colored by data
     for i in range(len(track_x) - 1):
         color = px.colors.sample_colorscale(colorscale, color_data[i])[0]
-        fig.add_trace(go.Scatter(
-            x=track_x[i:i+2],
-            y=track_y[i:i+2],
-            mode='lines',
-            line=dict(color=color, width=4),
-            showlegend=False,
-            hoverinfo='skip',
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=track_x[i : i + 2],
+                y=track_y[i : i + 2],
+                mode="lines",
+                line=dict(color=color, width=4),
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
 
     # Invisible hover overlay with distance info
     if distance is not None:
@@ -384,31 +450,40 @@ def create_track_map(
             hover_template = "<b>%{customdata:.0f} m</b><extra></extra>"
             custom = distance
 
-        fig.add_trace(go.Scatter(
-            x=track_x,
-            y=track_y,
-            mode='markers',
-            marker=dict(size=10, opacity=0),
-            customdata=custom,
-            hovertemplate=hover_template,
-            showlegend=False,
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=track_x,
+                y=track_y,
+                mode="markers",
+                marker=dict(size=10, opacity=0),
+                customdata=custom,
+                hovertemplate=hover_template,
+                showlegend=False,
+            )
+        )
 
     # Add start/finish marker
-    fig.add_trace(go.Scatter(
-        x=[track_x[0]],
-        y=[track_y[0]],
-        mode='markers',
-        marker=dict(size=12, color='white', line=dict(color='black', width=2)),
-        hoverinfo='skip',
-        showlegend=False,
-    ))
+    fig.add_trace(
+        go.Scatter(
+            x=[track_x[0]],
+            y=[track_y[0]],
+            mode="markers",
+            marker=dict(size=12, color="white", line=dict(color="black", width=2)),
+            hoverinfo="skip",
+            showlegend=False,
+        )
+    )
 
+    _axis_font = dict(color="#fff")
     fig.update_layout(
-        xaxis_title="X [m]",
-        yaxis_title="Y [m]",
+        xaxis=dict(title=dict(text="X [m]", font=_axis_font), tickfont=_axis_font),
+        yaxis=dict(
+            title=dict(text="Y [m]", font=_axis_font),
+            tickfont=_axis_font,
+            scaleanchor="x",
+            scaleratio=1,
+        ),
         height=height,
-        yaxis=dict(scaleanchor="x", scaleratio=1),
         showlegend=False,
     )
     return fig
