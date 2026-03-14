@@ -371,6 +371,67 @@ if vehicle == "Custom":
             }
         )
 
+# Vehicle parameter overrides (only for non-Custom vehicles)
+vehicle_overrides = {}
+if vehicle != "Custom":
+    with st.sidebar.expander("Vehicle Parameter Overrides"):
+        st.caption("Override parameters from the selected vehicle config.")
+        col1, col2 = st.columns(2)
+        with col1:
+            ov_mass = st.number_input(
+                "Mass [kg]",
+                min_value=400.0, max_value=1500.0,
+                value=float(_veh_pars["general"]["m"]),
+                step=10.0, key=f"ov_mass_{vehicle}",
+            )
+            ov_cwa = st.number_input(
+                "Drag coeff × area [m²]",
+                min_value=0.1, max_value=5.0,
+                value=float(_veh_pars["general"]["c_w_a"]),
+                step=0.05, format="%.2f", key=f"ov_cwa_{vehicle}",
+            )
+            ov_czaf = st.number_input(
+                "Front downforce coeff × area [m²]",
+                min_value=0.0, max_value=10.0,
+                value=float(_veh_pars["general"]["c_z_a_f"]),
+                step=0.1, format="%.2f", key=f"ov_czaf_{vehicle}",
+            )
+        with col2:
+            ov_czar = st.number_input(
+                "Rear downforce coeff × area [m²]",
+                min_value=0.0, max_value=10.0,
+                value=float(_veh_pars["general"]["c_z_a_r"]),
+                step=0.1, format="%.2f", key=f"ov_czar_{vehicle}",
+            )
+            _pow_max_kw = float(_veh_pars["engine"].get("pow_max", 0.0)) / 1e3
+            ov_pow_max = st.number_input(
+                "Engine power [kW]",
+                min_value=0.0, max_value=2000.0,
+                value=_pow_max_kw,
+                step=10.0, key=f"ov_pow_max_{vehicle}",
+            )
+            _pow_em_kw = float(_veh_pars["engine"].get("pow_e_motor", 0.0)) / 1e3
+            ov_pow_em = st.number_input(
+                "E-motor power [kW]",
+                min_value=0.0, max_value=1000.0,
+                value=_pow_em_kw,
+                step=10.0, key=f"ov_pow_em_{vehicle}",
+            )
+
+        # only include params that differ from the base config
+        if ov_mass != _veh_pars["general"]["m"]:
+            vehicle_overrides["m"] = ov_mass
+        if abs(ov_cwa - _veh_pars["general"]["c_w_a"]) > 1e-6:
+            vehicle_overrides["c_w_a"] = ov_cwa
+        if abs(ov_czaf - _veh_pars["general"]["c_z_a_f"]) > 1e-6:
+            vehicle_overrides["c_z_a_f"] = ov_czaf
+        if abs(ov_czar - _veh_pars["general"]["c_z_a_r"]) > 1e-6:
+            vehicle_overrides["c_z_a_r"] = ov_czar
+        if abs(ov_pow_max - _pow_max_kw) > 0.1:
+            vehicle_overrides["pow_max"] = ov_pow_max
+        if abs(ov_pow_em - _pow_em_kw) > 0.1:
+            vehicle_overrides["pow_e_motor"] = ov_pow_em
+
 with st.sidebar.expander("DRS / Active Aero Options"):
     use_drs = st.checkbox(
         "Enable DRS / Active Aero Zones", value=(_powertrain_type != "electric")
@@ -509,6 +570,7 @@ if run_button:
         "es_diff_max": es_diff_max,
         "vel_tol": 1e-5,
         "custom_vehicle_pars": custom_vehicle_pars,
+        "vehicle_overrides": vehicle_overrides,
     }
 
     driver_opts = {

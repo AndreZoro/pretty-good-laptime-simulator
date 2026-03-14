@@ -121,8 +121,22 @@ def main(
         _parser.read(parfilepath_veh)
         _veh_pars_peek = ast.literal_eval(_parser.get("VEH_PARS", "veh_pars"))
 
-    _engine_pars_peek = _veh_pars_peek.get("engine", {})
+    # apply vehicle parameter overrides (mass, aero, power) before car construction
+    _overrides = solver_opts.get("vehicle_overrides", {})
+    if _overrides:
+        import copy
+        _veh_pars_peek = copy.deepcopy(_veh_pars_peek)
+        for key in ("m", "c_w_a", "c_z_a_f", "c_z_a_r"):
+            if key in _overrides:
+                _veh_pars_peek["general"][key] = _overrides[key]
+        if "pow_max" in _overrides:
+            _veh_pars_peek["engine"]["pow_max"] = _overrides["pow_max"] * 1e3
+        if "pow_e_motor" in _overrides:
+            _veh_pars_peek["engine"]["pow_e_motor"] = _overrides["pow_e_motor"] * 1e3
+        # route through custom_vehicle_pars so the full patched dict is used for car construction
+        solver_opts = dict(solver_opts, custom_vehicle_pars=_veh_pars_peek)
 
+    _engine_pars_peek = _veh_pars_peek.get("engine", {})
 
     # set velocity limit
     if driver_opts["vel_lim_glob"] is not None:
