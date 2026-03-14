@@ -484,6 +484,10 @@ class Lap(object):
         mu = self.trackobj.mu
         stepsize = self.trackobj.stepsize
         drs = self.trackobj.drs
+        # active aero allowed: DRS zone AND curvature below threshold (closes in corners and during braking)
+        # braking is handled separately — backward sweep always uses active_aero=False
+        aa_kappa_threshold = carobj.pars_general.get("active_aero_kappa_threshold", float("inf"))
+        active_aero = drs & (np.abs(kappa) <= aa_kappa_threshold)
         vel_lim = self.trackobj.vel_lim
         no_points = self.trackobj.no_points
         pars_general_m = carobj.pars_general["m"]
@@ -521,7 +525,7 @@ class Lap(object):
                 f_y_pot_rr,
                 tire_loads[i, 3],
             ) = carobj.tire_force_pots(
-                vel=vel_cl[i], a_x=0.0, a_y=a_y, mu=mu[i], active_aero=drs[i]
+                vel=vel_cl[i], a_x=0.0, a_y=a_y, mu=mu[i], active_aero=active_aero[i]
             )
 
             # ----------------------------------------------------------------------------------------------------------
@@ -570,7 +574,7 @@ class Lap(object):
                     f_y_pot_rr,
                     tire_loads[i, 3],
                 ) = carobj.tire_force_pots(
-                    vel=vel_cl[i], a_x=a_x, a_y=a_y, mu=mu[i], active_aero=drs[i]
+                    vel=vel_cl[i], a_x=a_x, a_y=a_y, mu=mu[i], active_aero=active_aero[i]
                 )
 
                 # calculate remaining tire potential at front and rear axle for longitudinal force transmission
@@ -621,7 +625,7 @@ class Lap(object):
                 # calculate reached longitudinal acceleration (e_i accounts for rotational inertia)
                 a_x_start = (
                     f_x_powert
-                    - carobj.air_res(vel=vel_cl[i], drs=drs[i])
+                    - carobj.air_res(vel=vel_cl[i], drs=active_aero[i])
                     - carobj.roll_res(f_z_tot=tire_loads[i].sum())
                 ) / (pars_general_m * pars_gearbox_e_i[gear_cl[i]])
 
@@ -636,7 +640,7 @@ class Lap(object):
                 if i + 1 < no_points:
                     a_x_end = (
                         f_x_powert
-                        - carobj.air_res(vel=v_pred, drs=drs[i])
+                        - carobj.air_res(vel=v_pred, drs=active_aero[i])
                         - carobj.roll_res(f_z_tot=tire_loads[i].sum())
                     ) / (pars_general_m * pars_gearbox_e_i[gear_cl[i]])
 
@@ -694,7 +698,7 @@ class Lap(object):
                     # net force during shift: 25% powertrain minus drag and rolling resistance
                     f_net_shift = (
                         0.25 * f_x_powert
-                        - carobj.air_res(vel=vel_cl[i + 1], drs=drs[i])
+                        - carobj.air_res(vel=vel_cl[i + 1], drs=active_aero[i])
                         - carobj.roll_res(f_z_tot=tire_loads[i].sum())
                     )
                     a_shift = f_net_shift / (pars_general_m * pars_gearbox_e_i[gear_before])
@@ -917,7 +921,7 @@ class Lap(object):
                     # to consider the maximal possible deceleration that was used to calculate the velocity profile also
                     # in the energy calculations)
                     if k == i - j - 1:
-                        drs_tmp = drs[k]
+                        drs_tmp = active_aero[k]
                     else:
                         drs_tmp = False
 

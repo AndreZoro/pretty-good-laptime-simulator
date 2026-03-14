@@ -72,6 +72,13 @@ class Track(object):
         # prepare raceline (interpolation, distance and curvature calculation)
         self.__prep_raceline()
 
+        # rotate start point if required (dists_cl is unchanged; zone distances in track_pars are measured from S/F line)
+        if not math.isclose(self.pars_track.get("start_s", 0.0), 0.0):
+            shift = int(np.argmin(np.abs(self.pars_track["start_s"] - self.dists_cl[:-1])))
+            self.kappa = np.roll(self.kappa, -shift)
+            self.mu = np.roll(self.mu, -shift)
+            self.raceline = np.roll(self.raceline, -shift, axis=0)
+
         # set sector boundaries
         self.zone_inds = {}  # initialize zone_inds
         self.__get_zone_bounds()
