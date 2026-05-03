@@ -394,21 +394,21 @@ if vehicle != "Custom":
                 "Front downforce coeff × area [m²]",
                 min_value=0.0, max_value=10.0,
                 value=float(_veh_pars["general"]["c_z_a_f"]),
-                step=0.1, format="%.2f", key=f"ov_czaf_{vehicle}",
+                step=0.01, format="%.3f", key=f"ov_czaf_{vehicle}",
             )
         with col2:
             ov_czar = st.number_input(
                 "Rear downforce coeff × area [m²]",
                 min_value=0.0, max_value=10.0,
                 value=float(_veh_pars["general"]["c_z_a_r"]),
-                step=0.1, format="%.2f", key=f"ov_czar_{vehicle}",
+                step=0.01, format="%.3f", key=f"ov_czar_{vehicle}",
             )
             _pow_max_kw = float(_veh_pars["engine"].get("pow_max", 0.0)) / 1e3
             ov_pow_max = st.number_input(
                 "Engine power [kW]",
                 min_value=0.0, max_value=2000.0,
                 value=_pow_max_kw,
-                step=10.0, key=f"ov_pow_max_{vehicle}",
+                step=1.0, key=f"ov_pow_max_{vehicle}",
             )
             _pow_em_kw = float(_veh_pars["engine"].get("pow_e_motor", 0.0)) / 1e3
             ov_pow_em = st.number_input(
@@ -516,7 +516,7 @@ with st.sidebar.expander("Driver Behavior"):
 
     use_recuperation = st.checkbox("Use Energy Recuperation", value=True)
 
-    use_lift_coast = st.checkbox("Use Lift & Coast", value=False)
+    use_lift_coast = em_strategy == "FCFB"
     lift_coast_dist = st.slider(
         "Lift & Coast Distance [m]",
         min_value=0.0,

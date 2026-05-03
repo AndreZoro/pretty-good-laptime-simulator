@@ -53,7 +53,11 @@ if "fastf1_trace" not in st.session_state:
 
 class AbortException(Exception):
     """Raised when user aborts the optimization."""
+    pass
 
+
+class EarlyStopException(Exception):
+    """Raised when optimization has not improved sufficiently for N iterations."""
     pass
 
 
@@ -117,24 +121,27 @@ def run_sim_with_params(
     pow_max: float,
     mu_weather: float = 1.0,
     em_strategy: str = "ERSO",
+    driver_kwargs: dict = None,
+    interp_stepsize: float = 5.0,
+    curv_filt: float = 10.0,
 ):
     """Run simulation with given parameters and return sector times and max velocity."""
     vehicle_pars = build_vehicle_pars(base_config, c_w_a, c_z_a_total, mass, pow_max)
 
-    # Use fastest settings for parameter search (less accurate but much faster)
+    # Use same track resolution as the final simulation so identified parameters transfer correctly
     track_opts = {
         "trackname": track,
         "flip_track": False,
         "mu_weather": mu_weather,
-        "interp_stepsize_des": 30.0,  # Large step = fast
-        "curv_filt_width": 60.0,  # Must result in odd window size (60/30 + 1 = 3)
+        "interp_stepsize_des": interp_stepsize,
+        "curv_filt_width": curv_filt,
         "use_drs": True,
         "use_pit": False,
     }
 
     solver_opts = {
         "vehicle": None,
-        "limit_braking_weak_side": None,  # Skip weak side calculation
+        "limit_braking_weak_side": "FA",
         "v_start": 100.0 / 3.6,
         "find_v_start": True,  # Re-run with end-of-lap velocity as start
         "max_no_em_iters": 1,  # Single iteration
@@ -143,18 +150,19 @@ def run_sim_with_params(
         "custom_vehicle_pars": vehicle_pars,
     }
 
+    _dk = driver_kwargs or {}
     driver_opts = {
-        "vel_subtr_corner": 0.5,
+        "vel_subtr_corner": _dk.get("vel_subtr_corner", 0.5),
         "vel_lim_glob": None,
         "yellow_s1": False,
         "yellow_s2": False,
         "yellow_s3": False,
         "yellow_throttle": 0.3,
-        "initial_energy": 4.0e6,
+        "initial_energy": _dk.get("initial_energy", 4.0e6),
         "em_strategy": em_strategy,
-        "use_recuperation": True,
-        "use_lift_coast": True,
-        "lift_coast_dist": 10.0,
+        "use_recuperation": _dk.get("use_recuperation", True),
+        "use_lift_coast": _dk.get("use_lift_coast", True),
+        "lift_coast_dist": _dk.get("lift_coast_dist", 10.0),
     }
 
     try:
@@ -185,6 +193,9 @@ def run_grid_search(
     ref_velocity=None,
     mu_weather=1.0,
     em_strategy="ERSO",
+    driver_kwargs=None,
+    interp_stepsize=5.0,
+    curv_filt=10.0,
 ):
     """
     Run a coarse grid search to find approximate best parameters.
@@ -208,6 +219,7 @@ def run_grid_search(
 
     total = len(c_w_a_vals) * len(c_z_a_vals) * len(mass_vals) * len(pow_max_vals)
     count = 0
+    no_improve_count = 0
 
     # Weight for v_max error: 1 m/s error ~ 0.36 s sector error (squared: ~0.13)
     # This makes ~3 m/s v_max error equivalent to ~1 s sector error
@@ -226,8 +238,17 @@ def run_grid_search(
 
                         sectors, lap_time, v_max, sim_dist, sim_vel = (
                             run_sim_with_params(
-                                track, base_config, c_w_a, c_z_a, mass, pow_max,
-                                mu_weather=mu_weather, em_strategy=em_strategy,
+                                track,
+                                base_config,
+                                c_w_a,
+                                c_z_a,
+                                mass,
+                                pow_max,
+                                mu_weather=mu_weather,
+                                em_strategy=em_strategy,
+                                driver_kwargs=driver_kwargs,
+                                interp_stepsize=interp_stepsize,
+                                curv_filt=curv_filt,
                             )
                         )
                         elapsed = time.time() - start
@@ -258,7 +279,7 @@ def run_grid_search(
                             f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, {err_label} ({elapsed:.2f}s) {status}"
                         )
 
-                        if error < best_error:
+                        if error < best_error - 0.001:
                             best_error = error
                             best_params = [c_w_a, c_z_a, mass, pow_max]
                             best_sectors = sectors
@@ -266,6 +287,13 @@ def run_grid_search(
                             best_v_max = v_max
                             best_sim_distance = sim_dist
                             best_sim_velocity = sim_vel
+                            no_improve_count = 0
+                        else:
+                            no_improve_count += 1
+                            if no_improve_count >= 10:
+                                raise EarlyStopException()
+    except EarlyStopException:
+        log_container.write("Early stopping: no improvement > 0.001 for 10 consecutive evaluations.")
     except AbortException:
         # Log best result found before abort
         if best_params is not None:
@@ -297,6 +325,9 @@ def run_nelder_mead(
     ref_velocity=None,
     mu_weather=1.0,
     em_strategy="ERSO",
+    driver_kwargs=None,
+    interp_stepsize=5.0,
+    curv_filt=10.0,
 ):
     """
     Run Nelder-Mead optimization starting from an initial guess.
@@ -306,6 +337,7 @@ def run_nelder_mead(
     use_trace = ref_distance is not None and ref_velocity is not None
 
     eval_count = [0]
+    no_improve_count = [0]
     best_result = [
         None,
         None,
@@ -339,8 +371,17 @@ def run_nelder_mead(
 
         start = time.time()
         sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
-            track, base_config, c_w_a, c_z_a_total, mass, pow_max,
-            mu_weather=mu_weather, em_strategy=em_strategy,
+            track,
+            base_config,
+            c_w_a,
+            c_z_a_total,
+            mass,
+            pow_max,
+            mu_weather=mu_weather,
+            em_strategy=em_strategy,
+            driver_kwargs=driver_kwargs,
+            interp_stepsize=interp_stepsize,
+            curv_filt=curv_filt,
         )
         elapsed = time.time() - start
 
@@ -363,8 +404,8 @@ def run_nelder_mead(
             f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, {err_label} ({elapsed:.2f}s)"
         )
 
-        # Track best result for abort case (store clipped values)
-        if error < best_result[4]:
+        # Track best result; raise EarlyStopException if no improvement for 10 evals
+        if error < best_result[4] - 0.001:
             best_result[0] = [c_w_a, c_z_a_total, mass, pow_max]
             best_result[1] = sectors
             best_result[2] = lap_time
@@ -372,6 +413,11 @@ def run_nelder_mead(
             best_result[4] = error
             best_result[5] = sim_dist
             best_result[6] = sim_vel
+            no_improve_count[0] = 0
+        else:
+            no_improve_count[0] += 1
+            if no_improve_count[0] >= 10:
+                raise EarlyStopException()
 
         return error
 
@@ -394,8 +440,17 @@ def run_nelder_mead(
         pow_max = np.clip(result.x[3], pow_max_bounds[0], pow_max_bounds[1])
 
         sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
-            track, base_config, c_w_a, c_z_a_total, mass, pow_max,
-            mu_weather=mu_weather, em_strategy=em_strategy,
+            track,
+            base_config,
+            c_w_a,
+            c_z_a_total,
+            mass,
+            pow_max,
+            mu_weather=mu_weather,
+            em_strategy=em_strategy,
+            driver_kwargs=driver_kwargs,
+            interp_stepsize=interp_stepsize,
+            curv_filt=curv_filt,
         )
 
         return (
@@ -407,6 +462,9 @@ def run_nelder_mead(
             sim_dist,
             sim_vel,
         )
+    except EarlyStopException:
+        log_container.write("Early stopping: no improvement > 0.001 for 10 consecutive evaluations.")
+        return tuple(best_result)
     except AbortException:
         raise
 
@@ -423,6 +481,9 @@ def run_trust_constr(
     ref_velocity=None,
     mu_weather=1.0,
     em_strategy="ERSO",
+    driver_kwargs=None,
+    interp_stepsize=5.0,
+    curv_filt=10.0,
 ):
     """
     Run Trust-Region Constrained optimization starting from an initial guess.
@@ -432,6 +493,7 @@ def run_trust_constr(
     use_trace = ref_distance is not None and ref_velocity is not None
 
     eval_count = [0]
+    no_improve_count = [0]
     best_result = [
         None,
         None,
@@ -476,8 +538,17 @@ def run_trust_constr(
 
         start = time.time()
         sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
-            track, base_config, c_w_a, c_z_a_total, mass, pow_max,
-            mu_weather=mu_weather, em_strategy=em_strategy,
+            track,
+            base_config,
+            c_w_a,
+            c_z_a_total,
+            mass,
+            pow_max,
+            mu_weather=mu_weather,
+            em_strategy=em_strategy,
+            driver_kwargs=driver_kwargs,
+            interp_stepsize=interp_stepsize,
+            curv_filt=curv_filt,
         )
         elapsed = time.time() - start
 
@@ -500,8 +571,8 @@ def run_trust_constr(
             f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, {err_label} ({elapsed:.2f}s)"
         )
 
-        # Track best result for abort case (store real values)
-        if error < best_result[4]:
+        # Track best result (no early-stop here — gradient evals would fire it prematurely)
+        if error < best_result[4] - 0.001:
             best_result[0] = list(real_params)
             best_result[1] = sectors
             best_result[2] = lap_time
@@ -512,12 +583,27 @@ def run_trust_constr(
 
         return error
 
+    # Early stopping via callback (called once per iteration, not per gradient eval)
+    cb_last_best = [float("inf")]
+
+    def callback_tc(xk, state):
+        if best_result[4] < cb_last_best[0] - 0.001:
+            cb_last_best[0] = best_result[4]
+            no_improve_count[0] = 0
+        else:
+            no_improve_count[0] += 1
+        if no_improve_count[0] >= 10:
+            log_container.write("Early stopping: no improvement > 0.001 for 10 consecutive iterations.")
+            return True  # trust-constr stops when callback returns True
+        return False
+
     try:
         result = minimize(
             objective,
             x0=x0_normalized,
             method="trust-constr",
             bounds=scipy_bounds,
+            callback=callback_tc,
             options={
                 "maxiter": 500,
                 "gtol": 1e-5,
@@ -529,8 +615,17 @@ def run_trust_constr(
         real_params = to_real(result.x)
         c_w_a, c_z_a_total, mass, pow_max = real_params
         sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
-            track, base_config, c_w_a, c_z_a_total, mass, pow_max,
-            mu_weather=mu_weather, em_strategy=em_strategy,
+            track,
+            base_config,
+            c_w_a,
+            c_z_a_total,
+            mass,
+            pow_max,
+            mu_weather=mu_weather,
+            em_strategy=em_strategy,
+            driver_kwargs=driver_kwargs,
+            interp_stepsize=interp_stepsize,
+            curv_filt=curv_filt,
         )
 
         return (
@@ -542,6 +637,9 @@ def run_trust_constr(
             sim_dist,
             sim_vel,
         )
+    except EarlyStopException:
+        log_container.write("Early stopping: no improvement > 0.001 for 10 consecutive evaluations.")
+        return tuple(best_result)
     except AbortException:
         raise
 
@@ -558,6 +656,9 @@ def run_lbfgsb(
     ref_velocity=None,
     mu_weather=1.0,
     em_strategy="ERSO",
+    driver_kwargs=None,
+    interp_stepsize=5.0,
+    curv_filt=10.0,
 ):
     """
     Run L-BFGS-B optimization starting from an initial guess.
@@ -567,6 +668,7 @@ def run_lbfgsb(
     use_trace = ref_distance is not None and ref_velocity is not None
 
     eval_count = [0]
+    no_improve_count = [0]
     best_result = [
         None,
         None,
@@ -611,8 +713,17 @@ def run_lbfgsb(
 
         start = time.time()
         sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
-            track, base_config, c_w_a, c_z_a_total, mass, pow_max,
-            mu_weather=mu_weather, em_strategy=em_strategy,
+            track,
+            base_config,
+            c_w_a,
+            c_z_a_total,
+            mass,
+            pow_max,
+            mu_weather=mu_weather,
+            em_strategy=em_strategy,
+            driver_kwargs=driver_kwargs,
+            interp_stepsize=interp_stepsize,
+            curv_filt=curv_filt,
         )
         elapsed = time.time() - start
 
@@ -635,8 +746,8 @@ def run_lbfgsb(
             f"lap={lap_time:.2f}s, v_max={v_max * 3.6:.1f}km/h, {err_label} ({elapsed:.2f}s)"
         )
 
-        # Track best result for abort case (store real values)
-        if error < best_result[4]:
+        # Track best result (no early-stop here — gradient evals would fire it prematurely)
+        if error < best_result[4] - 0.001:
             best_result[0] = list(real_params)
             best_result[1] = sectors
             best_result[2] = lap_time
@@ -647,12 +758,26 @@ def run_lbfgsb(
 
         return error
 
+    # Early stopping via callback (called once per iteration, not per gradient eval)
+    cb_last_best = [float("inf")]
+
+    def callback_lbfgsb(xk):
+        if best_result[4] < cb_last_best[0] - 0.001:
+            cb_last_best[0] = best_result[4]
+            no_improve_count[0] = 0
+        else:
+            no_improve_count[0] += 1
+        if no_improve_count[0] >= 10:
+            log_container.write("Early stopping: no improvement > 0.001 for 10 consecutive iterations.")
+            raise EarlyStopException()
+
     try:
         result = minimize(
             objective,
             x0=x0_normalized,
             method="L-BFGS-B",
             bounds=scipy_bounds,
+            callback=callback_lbfgsb,
             options={
                 "maxiter": 1000,
                 "ftol": 1e-5,
@@ -664,8 +789,17 @@ def run_lbfgsb(
         real_params = to_real(result.x)
         c_w_a, c_z_a_total, mass, pow_max = real_params
         sectors, lap_time, v_max, sim_dist, sim_vel = run_sim_with_params(
-            track, base_config, c_w_a, c_z_a_total, mass, pow_max,
-            mu_weather=mu_weather, em_strategy=em_strategy,
+            track,
+            base_config,
+            c_w_a,
+            c_z_a_total,
+            mass,
+            pow_max,
+            mu_weather=mu_weather,
+            em_strategy=em_strategy,
+            driver_kwargs=driver_kwargs,
+            interp_stepsize=interp_stepsize,
+            curv_filt=curv_filt,
         )
 
         return (
@@ -677,6 +811,9 @@ def run_lbfgsb(
             sim_dist,
             sim_vel,
         )
+    except EarlyStopException:
+        log_container.write("Early stopping: no improvement > 0.001 for 10 consecutive evaluations.")
+        return tuple(best_result)
     except AbortException:
         raise
 
@@ -703,6 +840,17 @@ vehicle_base = st.sidebar.selectbox(
 # Simulation settings
 st.sidebar.header("Simulation Settings")
 
+with st.sidebar.expander("Track Processing"):
+    interp_stepsize = st.slider(
+        "Interpolation Step Size [m]",
+        min_value=1.0, max_value=20.0, value=5.0, step=1.0,
+    )
+    curv_filt_width = st.slider(
+        "Curvature Filter Width [m]",
+        min_value=0.0, max_value=30.0, value=10.0, step=1.0,
+        help="Set to 0 to disable filtering",
+    )
+    curv_filt = curv_filt_width if curv_filt_width > 0 else None
 
 
 # Target source toggle
@@ -886,6 +1034,34 @@ em_strategy = st.sidebar.selectbox(
     help="ERSO: energy-recuperation strategy optimizer. FCFB: full charge full boost. LBP: lap-based planning. LS: lift-and-coast strategy. NONE: no strategy.",
 )
 
+default_energy_j = 4.0e6
+initial_energy_mj = st.sidebar.slider(
+    "Initial Energy [MJ]",
+    min_value=0.0,
+    max_value=6.0,
+    value=default_energy_j / 1e6,
+    step=0.1,
+)
+
+with st.sidebar.expander("Driver Behavior"):
+    vel_subtr_corner = st.slider(
+        "Corner Safety Margin [m/s]",
+        min_value=0.0,
+        max_value=3.0,
+        value=0.5,
+        step=0.1,
+    )
+    use_recuperation = st.checkbox("Use Energy Recuperation", value=True)
+    use_lift_coast = em_strategy == "FCFB"
+    lift_coast_dist = st.slider(
+        "Lift & Coast Distance [m]",
+        min_value=0.0,
+        max_value=100.0,
+        value=10.0,
+        step=5.0,
+        disabled=not use_lift_coast,
+    )
+
 with st.sidebar.expander("Aerodynamics Bounds"):
     # Default bounds: ±10% of MVRC_2026 values (c_w_a=1.56, c_z_a_total=4.88)
     c_w_a_min = st.number_input("Drag min [m²]", value=0.60, step=0.2)
@@ -943,7 +1119,17 @@ if run_button:
     ]
 
     # Common optimizer kwargs
+    driver_kwargs = {
+        "vel_subtr_corner": vel_subtr_corner,
+        "initial_energy": initial_energy_mj * 1e6,
+        "use_recuperation": use_recuperation,
+        "use_lift_coast": use_lift_coast,
+        "lift_coast_dist": lift_coast_dist,
+    }
     trace_kwargs = {"mu_weather": mu_weather, "em_strategy": em_strategy}
+    trace_kwargs["driver_kwargs"] = driver_kwargs
+    trace_kwargs["interp_stepsize"] = interp_stepsize
+    trace_kwargs["curv_filt"] = curv_filt
     if use_trace_mode:
         trace_kwargs["ref_distance"] = ref_distance
         trace_kwargs["ref_velocity"] = ref_velocity
@@ -1225,9 +1411,9 @@ if run_button:
     final_track_opts = {
         "trackname": track,
         "flip_track": False,
-        "mu_weather": 1.0,
-        "interp_stepsize_des": 5.0,
-        "curv_filt_width": 10.0,
+        "mu_weather": mu_weather,
+        "interp_stepsize_des": interp_stepsize,
+        "curv_filt_width": curv_filt,
         "use_drs": True,
         "use_pit": False,
     }
@@ -1242,17 +1428,17 @@ if run_button:
         "custom_vehicle_pars": vehicle_pars,
     }
     final_driver_opts = {
-        "vel_subtr_corner": 0.5,
+        "vel_subtr_corner": driver_kwargs.get("vel_subtr_corner", 0.5),
         "vel_lim_glob": None,
         "yellow_s1": False,
         "yellow_s2": False,
         "yellow_s3": False,
         "yellow_throttle": 0.3,
-        "initial_energy": 4.0e6,
-        "em_strategy": "FCFB",
-        "use_recuperation": True,
-        "use_lift_coast": False,
-        "lift_coast_dist": 10.0,
+        "initial_energy": driver_kwargs.get("initial_energy", 4.0e6),
+        "em_strategy": em_strategy,
+        "use_recuperation": driver_kwargs.get("use_recuperation", True),
+        "use_lift_coast": driver_kwargs.get("use_lift_coast", True),
+        "lift_coast_dist": driver_kwargs.get("lift_coast_dist", 10.0),
     }
     try:
         final_sim_result = run_simulation_advanced(
@@ -1260,6 +1446,16 @@ if run_button:
         )
     except Exception:
         final_sim_result = None
+
+    # Prefer final sim results for display; fall back to best optimization run if final sim failed
+    if final_sim_result is not None:
+        _display_sectors = list(final_sim_result.sector_times)
+        _display_lap = final_sim_result.lap_time
+        _display_v_max = float(np.max(final_sim_result.velocity))
+    else:
+        _display_sectors = final_sectors
+        _display_lap = final_lap
+        _display_v_max = best_v_max
 
     st.session_state.param_id_result = {
         "success": True,
@@ -1270,10 +1466,10 @@ if run_button:
         "mass": mass_opt,
         "pow_max": pow_max_opt,
         "target_sectors": target_sectors,
-        "simulated_sectors": final_sectors,
-        "simulated_lap": final_lap,
+        "simulated_sectors": _display_sectors,
+        "simulated_lap": _display_lap,
         "target_v_max": target_v_max_ms,
-        "simulated_v_max": best_v_max,
+        "simulated_v_max": _display_v_max,
         "track": track,
         "vehicle": vehicle_base,
         "use_trace": use_trace_mode,
@@ -1303,8 +1499,17 @@ if st.session_state.param_id_result is not None:
         st.metric("Power", f"{res['pow_max'] / 1e3:.0f} kW")
 
     st.caption(
-        f"Downforce split: Front {res['c_z_a_f']:.2f} m² / Rear {res['c_z_a_r']:.2f} m² (based on CoG position)"
+        f"Downforce split: Front {res['c_z_a_f']:.3f} m² / Rear {res['c_z_a_r']:.3f} m² (based on CoG position)"
     )
+
+    _veh = res["vehicle"]
+    if st.button("Load in Advanced Simulation", type="secondary"):
+        st.session_state[f"ov_mass_{_veh}"] = float(res["mass"])
+        st.session_state[f"ov_cwa_{_veh}"] = float(res["c_w_a"])
+        st.session_state[f"ov_czaf_{_veh}"] = float(res["c_z_a_f"])
+        st.session_state[f"ov_czar_{_veh}"] = float(res["c_z_a_r"])
+        st.session_state[f"ov_pow_max_{_veh}"] = float(res["pow_max"]) / 1e3
+        st.success(f"Parameters loaded. Go to Advanced Simulation and select '{_veh}'.")
 
     st.divider()
     st.header("Sector Time Comparison")
@@ -1365,22 +1570,25 @@ if st.session_state.param_id_result is not None:
         st.markdown(f"**Difference:** :{color}[{v_diff:+.1f} km/h]")
 
     # Speed trace overlay plot (when trace data is available)
-    if (
-        res.get("use_trace")
-        and res.get("sim_distance") is not None
-        and res.get("ref_distance") is not None
-    ):
+    _has_sim = res.get("sim_result") is not None or res.get("sim_distance") is not None
+    if res.get("use_trace") and _has_sim and res.get("ref_distance") is not None:
         st.divider()
         st.header("Speed Trace Comparison")
 
-        sim_dist = res["sim_distance"]
-        sim_vel = res["sim_velocity"]
+        # Prefer the final full-resolution simulation over the coarse optimization run
+        if res.get("sim_result") is not None:
+            sim_dist = res["sim_result"].distance
+            sim_vel = res["sim_result"].velocity
+        else:
+            sim_dist = res["sim_distance"]
+            sim_vel = res["sim_velocity"]
         r_dist = res["ref_distance"]
         r_vel = res["ref_velocity"]
 
-        # Normalize distances to 0-1 for overlay
+        # Normalize both to [0, 1] then scale to reference (real-world) track length
         sim_dist_norm = sim_dist / sim_dist[-1]
         ref_dist_norm = r_dist / r_dist[-1]
+        x_km = ref_dist_norm * r_dist[-1] / 1000  # common x-axis in km
 
         # Interpolate sim onto ref grid for delta calculation
         sim_vel_interp = np.interp(ref_dist_norm, sim_dist_norm, sim_vel)
@@ -1397,7 +1605,7 @@ if st.session_state.param_id_result is not None:
         )
         fig.add_trace(
             go.Scatter(
-                x=ref_dist_norm * r_dist[-1] / 1000,
+                x=x_km,
                 y=r_vel * 3.6,
                 name="FastF1 Reference",
                 line=dict(color="#1f77b4"),
@@ -1407,8 +1615,8 @@ if st.session_state.param_id_result is not None:
         )
         fig.add_trace(
             go.Scatter(
-                x=sim_dist / 1000,
-                y=sim_vel * 3.6,
+                x=x_km,
+                y=sim_vel_interp * 3.6,
                 name="Simulation (Best Fit)",
                 line=dict(color="#d62728"),
             ),
@@ -1417,7 +1625,7 @@ if st.session_state.param_id_result is not None:
         )
         fig.add_trace(
             go.Scatter(
-                x=ref_dist_norm * r_dist[-1] / 1000,
+                x=x_km,
                 y=delta_vel * 3.6,
                 name="Delta",
                 line=dict(color="#2ca02c"),
@@ -1445,11 +1653,12 @@ if st.session_state.param_id_result is not None:
         sim_result = res.get("sim_result")
 
         if ff1_trace is not None:
-            # Shared normalized distance grids
+            # Shared normalized distance grids — both scaled to reference (real-world) track length
             ref_dist_km = ref_dist_norm * r_dist[-1] / 1000
-            sim_dist_km = sim_dist / 1000 if sim_result is not None else None
             sim_dist_full_km = (
-                sim_result.distance / 1000 if sim_result is not None else None
+                sim_result.distance / sim_result.distance[-1] * r_dist[-1] / 1000
+                if sim_result is not None
+                else None
             )
 
             # --- Gear comparison ---

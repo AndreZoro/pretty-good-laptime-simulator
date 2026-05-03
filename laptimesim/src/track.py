@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import ast
 import trajectory_planning_helpers as tph
 import configparser
+from scipy.interpolate import CubicSpline
 
 
 class Track(object):
@@ -32,7 +33,8 @@ class Track(object):
                  "__stepsize",
                  "__no_points",
                  "__no_points_cl",
-                 "__dists_cl")
+                 "__dists_cl",
+                 "_kappa_precomputed")
 
     # ------------------------------------------------------------------------------------------------------------------
     # CONSTRUCTOR ------------------------------------------------------------------------------------------------------
@@ -53,8 +55,17 @@ class Track(object):
 
         self.pars_track.update(pars_track_tmp[self.pars_track["trackname"]])
 
-        # load raceline
-        self.raceline = np.loadtxt(trackfilepath, comments='#', delimiter=',')
+        # load raceline (supports [x, y], [x, y, kappa], or [x, y, z] columns)
+        # read header comment to determine if col 2 is kappa or z
+        with open(trackfilepath, 'r') as _f:
+            _header = _f.readline().lstrip('#').strip()
+        _col_names = [c.strip() for c in _header.split(',')]
+        _raceline_raw = np.loadtxt(trackfilepath, comments='#', delimiter=',')
+        _col2_is_kappa = (_raceline_raw.shape[1] >= 3
+                          and len(_col_names) >= 3
+                          and 'kappa' in _col_names[2].lower())
+        self._kappa_precomputed = _raceline_raw[:, 2] if _col2_is_kappa else None
+        self.raceline = _raceline_raw[:, :2]
 
         # set friction values artificially as long as no real friction values available and limit them to a valid range
         self.mu = np.ones(self.raceline.shape[0]) * self.pars_track["mu_mean"] * self.pars_track["mu_weather"]
@@ -248,10 +259,16 @@ class Track(object):
         self.mu = np.interp(self.dists_cl[:-1], dists_cl_preinterp, mu_preinterp_cl)  # unclosed
 
         # calculate curvature profile (unclosed)
-        self.kappa = tph.calc_head_curv_an.calc_head_curv_an(coeffs_x=coeffs_x_cl,
-                                                             coeffs_y=coeffs_y_cl,
-                                                             ind_spls=ind_spls,
-                                                             t_spls=t_spls)[1]
+        # if kappa was pre-computed by the raceline optimizer and stored in the CSV, interpolate it to the new
+        # stepsize; otherwise fall back to computing it analytically from the spline
+        if self._kappa_precomputed is not None:
+            cs = CubicSpline(dists_cl_preinterp[:-1], self._kappa_precomputed)
+            self.kappa = cs(self.dists_cl[:-1])
+        else:
+            self.kappa = tph.calc_head_curv_an.calc_head_curv_an(coeffs_x=coeffs_x_cl,
+                                                                  coeffs_y=coeffs_y_cl,
+                                                                  ind_spls=ind_spls,
+                                                                  t_spls=t_spls)[1]
 
         # smooth curvature profile if desired
         if self.pars_track["curv_filt_width"] is not None and self.pars_track["curv_filt_width"] > self.stepsize:

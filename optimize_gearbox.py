@@ -28,8 +28,8 @@ import main_laptimesim
 # ---------------------------------------------------------------------------
 
 REPO_PATH = os.path.dirname(os.path.abspath(__file__))
-VEHICLE_INI = os.path.join(REPO_PATH, "laptimesim", "input", "vehicles", "F1_2025.ini")
-TRACK_NAME = "Catalunya"
+VEHICLE_INI = os.path.join(REPO_PATH, "laptimesim", "input", "vehicles", "F1_2026_melbourne.ini")
+TRACK_NAME = "Melbourne"
 
 # Parameter bounds: [i_first, i_last, progression, n_shift_mid]
 # n_shift_mid must be >= n_max (14500) to shift near peak power, as real F1 cars do
@@ -37,7 +37,7 @@ BOUNDS = [
     (0.04, 0.06),  # i_first
     (0.20, 0.22),  # i_last
     (0.25, 2.0),  # progression
-    (11000, 11200.0),  # n_shift_mid (near n_max=14500 to n_end=15000)
+    (10500, 12000.0),  # n_shift_mid (near n_max=14500 to n_end=15000)
 ]
 
 # ---------------------------------------------------------------------------
@@ -98,9 +98,9 @@ DRIVER_OPTS = {
     "yellow_s3": False,
     "yellow_throttle": 0.3,
     "initial_energy": 4.0e6,
-    "em_strategy": "FCFB",
+    "em_strategy": "ERSO",
     "use_recuperation": True,
-    "use_lift_coast": False,
+    "use_lift_coast": True,
     "lift_coast_dist": 10.0,
 }
 

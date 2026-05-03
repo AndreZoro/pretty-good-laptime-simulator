@@ -27,7 +27,8 @@ def main(track_pars: dict,
          imp_opts: dict,
          reg_smooth_opts: dict,
          stepsize_opts: dict,
-         optim_opts_mincurv: dict) -> None:
+         optim_opts_mincurv: dict,
+         smooth_opts: dict) -> None:
 
     # ------------------------------------------------------------------------------------------------------------------
     # CHECK PYTHON DEPENDENCIES ----------------------------------------------------------------------------------------
@@ -244,6 +245,38 @@ def main(track_pars: dict,
                         stepsize_interp=stepsize_opts["stepsize_interp_after_opt"])
 
     # ------------------------------------------------------------------------------------------------------------------
+    # TAUBIN SMOOTHING (optional post-processing) ----------------------------------------------------------------------
+    # ------------------------------------------------------------------------------------------------------------------
+
+    if smooth_opts["smooth_iters"] > 0:
+        lambda_t = smooth_opts["lambda_t"]
+        mu_t = smooth_opts["mu_t"]
+        for _ in range(smooth_opts["smooth_iters"]):
+            # pass 1: smooth + shrink (lambda > 0)
+            prev_pts = np.roll(raceline_opt_interp, 1, axis=0)
+            next_pts = np.roll(raceline_opt_interp, -1, axis=0)
+            raceline_opt_interp = raceline_opt_interp + lambda_t * (
+                0.5 * (prev_pts + next_pts) - raceline_opt_interp
+            )
+            # pass 2: smooth + expand (mu < 0, |mu| > lambda cancels shrinkage)
+            prev_pts = np.roll(raceline_opt_interp, 1, axis=0)
+            next_pts = np.roll(raceline_opt_interp, -1, axis=0)
+            raceline_opt_interp = raceline_opt_interp + mu_t * (
+                0.5 * (prev_pts + next_pts) - raceline_opt_interp
+            )
+
+        path_len_after = np.sum(np.sqrt(np.sum(np.diff(
+            np.vstack((raceline_opt_interp, raceline_opt_interp[0])), axis=0) ** 2, axis=1)))
+        print("INFO: Path length after Taubin smoothing: %.1fm" % path_len_after)
+
+        # recompute splines from smoothed points for curvature plot
+        raceline_cl = np.vstack((raceline_opt_interp, raceline_opt_interp[0]))
+        coeffs_x_opt, coeffs_y_opt, _, _ = tph.calc_splines.calc_splines(
+            path=raceline_cl, use_dist_scaling=True)
+        spline_inds_opt_interp = np.arange(raceline_opt_interp.shape[0])
+        t_vals_opt_interp = np.zeros(raceline_opt_interp.shape[0])
+
+    # ------------------------------------------------------------------------------------------------------------------
     # CALCULATE HEADING AND CURVATURE ----------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
 
@@ -258,9 +291,10 @@ def main(track_pars: dict,
     # EXPORT -----------------------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
 
-    # export raceline
+    # export raceline (x, y, kappa) — curvature from optimizer spline to avoid re-fitting errors in track.py
+    raceline_export = np.column_stack((raceline_opt_interp, kappa_opt))
     with open(outfilepath_rl, "wb") as fh:
-        np.savetxt(fh, raceline_opt_interp, fmt='%.6f,%.6f', header="x_m,y_m")
+        np.savetxt(fh, raceline_export, fmt='%.6f,%.6f,%.8f', header="x_m,y_m,kappa_radpm")
 
     print("RESULT: Length of minimum curvature path is %.1fm" % np.sum(spline_lengths_opt))
     print("INFO: Finished creation of trajectory:", time.strftime("%H:%M:%S"))
@@ -329,7 +363,7 @@ if __name__ == '__main__':
 
     track_pars_ = {"location": "Shanghai_2026",
                    "track_length": 5451.0,
-                   "track_width": 15.0}
+                   "track_width": 18.0}
 
     # track_pars_ = {"location": "Austin",
     #                "track_length": 5513.0,
@@ -459,7 +493,7 @@ if __name__ == '__main__':
     # s_reg:    [-] smoothing factor -> range [1.0, 100.0] (play a little bit)
 
     reg_smooth_opts_ = {"k_reg": 3,
-                        "s_reg": 40.0}
+                        "s_reg": 60.0}
 
     # set stepsizes used during optimization ---------------------------------------------------------------------------
     # stepsize_prep:                [m] used for linear interpolation before spline approximation
@@ -481,6 +515,16 @@ if __name__ == '__main__':
                            "iqp_iters_min": 3,
                            "iqp_curverror_allowed": 0.01}
 
+    # Taubin smoothing options -----------------------------------------------------------------------------------------
+    # smooth_iters: number of smoothing iterations (0 = disabled)
+    # lambda_t:     pass-1 step size [0.0, 1.0] — positive, smooths + shrinks
+    # mu_t:         pass-2 step size — negative, |mu_t| > lambda_t to cancel shrinkage
+    #               typical values: lambda_t=0.5, mu_t=-0.53
+
+    smooth_opts_ = {"smooth_iters": 10,
+                    "lambda_t": 0.5,
+                    "mu_t": -0.53}
+
     # ------------------------------------------------------------------------------------------------------------------
     # SIMULATION CALL --------------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
@@ -490,4 +534,5 @@ if __name__ == '__main__':
          imp_opts=imp_opts_,
          reg_smooth_opts=reg_smooth_opts_,
          stepsize_opts=stepsize_opts_,
-         optim_opts_mincurv=optim_opts_mincurv_)
+         optim_opts_mincurv=optim_opts_mincurv_,
+         smooth_opts=smooth_opts_)
