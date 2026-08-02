@@ -138,55 +138,73 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
         result: SimulationResult object containing the data to visualize
         key_prefix: Optional prefix for Streamlit widget keys (for use on multiple pages)
     """
-    viz_options = get_viz_options(result)
-    selected_viz = st.selectbox(
-        "Display",
-        options=list(viz_options.keys()),
-        key=f"{key_prefix}viz_select" if key_prefix else None,
+    # Streamlit recreates the component iframe on every rerun (e.g. switching the
+    # selectbox below); the empty iframe box defaults to a white background until
+    # its document paints, causing a white flash on a dark theme. Force it transparent.
+    st.markdown(
+        "<style>iframe{background-color:transparent!important;}</style>",
+        unsafe_allow_html=True,
     )
 
-    viz_data = viz_options[selected_viz]["data"]
-    viz_unit = viz_options[selected_viz]["unit"]
-    viz_colorscale = viz_options[selected_viz]["colorscale"]
+    # All visualization options are embedded in a single payload and switching
+    # happens via client-side Plotly calls (see applyViz() below) rather than a
+    # Streamlit rerun. A Streamlit-triggered rerun would hand the iframe a new
+    # srcdoc, forcing it to reload/renavigate — Firefox paints that transitional
+    # navigation opaque white before the new document's CSS/background applies,
+    # producing a white flash (Chromium happens to mask it). Never reloading the
+    # iframe at all avoids the flash in every browser, not just Chromium.
+    viz_options = get_viz_options(result)
+    default_viz = next(iter(viz_options))
 
-    data_min = float(np.min(viz_data))
-    data_max = float(np.max(viz_data))
-    if data_max - data_min > 0:
-        data_normalized = (viz_data - data_min) / (data_max - data_min)
-    else:
-        data_normalized = np.zeros_like(viz_data)
-
-    # Downsample to ~10 m resolution for track rendering
+    # Downsample to ~10 m resolution for track rendering (geometry is shared by
+    # every visualization option)
     n_pts = len(result.track_x)
     step_m = result.distance[-1] / n_pts if n_pts > 1 else 1.0
     ds = max(1, round(10.0 / step_m))
     tx = result.track_x[::ds].tolist()
     ty = result.track_y[::ds].tolist()
-    dn = data_normalized[::ds].tolist()
     dist = result.distance[::ds].tolist()
-    vd = viz_data[::ds].tolist()
 
-    y_label = f"{selected_viz} [{viz_unit}]" if viz_unit else selected_viz
-    unit_str = f" {viz_unit}" if viz_unit else ""
+    options_payload = {}
+    for name, opt in viz_options.items():
+        viz_data = opt["data"]
+        viz_unit = opt["unit"]
+
+        data_min = float(np.min(viz_data))
+        data_max = float(np.max(viz_data))
+        if data_max - data_min > 0:
+            data_normalized = (viz_data - data_min) / (data_max - data_min)
+        else:
+            data_normalized = np.zeros_like(viz_data)
+
+        options_payload[name] = {
+            "prof_data": viz_data.tolist(),
+            "vd": viz_data[::ds].tolist(),
+            "color_vals": data_normalized[::ds].tolist(),
+            "colorscale": opt["colorscale"],
+            "y_label": f"{name} [{viz_unit}]" if viz_unit else name,
+            "unit_str": f" {viz_unit}" if viz_unit else "",
+            "viz_unit": viz_unit,
+            "data_min": data_min,
+            "data_max": data_max,
+        }
 
     sector_dists = result.sector_distances if result.sector_distances else []
     sector_x = [xy[0] for xy in result.sector_xy] if result.sector_xy else []
     sector_y = [xy[1] for xy in result.sector_xy] if result.sector_xy else []
 
+    option_tags = "".join(
+        f'<option value="{name}">{name}</option>' for name in viz_options.keys()
+    )
+
     payload = json.dumps(
         {
             "prof_dist": result.distance.tolist(),
-            "prof_data": viz_data.tolist(),
             "track_x": tx,
             "track_y": ty,
-            "color_vals": dn,
-            "colorscale": viz_colorscale,
             "dist": dist,
-            "vd": vd,
-            "viz_name": selected_viz,
-            "y_label": y_label,
-            "unit_str": unit_str,
-            "viz_unit": viz_unit,
+            "default_viz": default_viz,
+            "options": options_payload,
             "sector_dists": sector_dists,
             "sector_x": sector_x,
             "sector_y": sector_y,
@@ -197,7 +215,14 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
 <html><head>
 <script>{_get_plotly_js()}</script>
 <style>
-  body {{ margin:0; padding:0; background:transparent; }}
+  html, body {{ margin:0; padding:0; background:transparent; font-family:"Source Sans Pro",sans-serif; }}
+  #controls {{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }}
+  #controls label {{ color:#fff; font-size:14px; }}
+  #legend {{ color:#bbb; font-size:13px; margin-top:4px; }}
+  #viz-select {{
+    background:#262730; color:#fff; border:1px solid #4a4a52; border-radius:6px;
+    padding:4px 8px; font-size:14px; font-family:inherit;
+  }}
   #wrap {{ display:flex; width:100%; gap:6px; }}
   #profile {{ flex:4; min-width:0; }}
   #trackmap {{ flex:2; min-width:0; position:relative; }}
@@ -213,12 +238,20 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
   }}
 </style>
 </head><body>
+<div id="controls">
+  <label for="viz-select">Display</label>
+  <select id="viz-select">{option_tags}</select>
+</div>
 <div id="wrap">
   <div id="profile"></div>
   <div id="trackmap"></div>
 </div>
+<div id="legend"></div>
 <script>
 const D = {payload};
+let currentViz = D.default_viz;
+document.getElementById('viz-select').value = currentViz;
+const O = D.options[currentViz];
 
 // ── Profile chart ──────────────────────────────────────────────
 const sectorLabels = ['S1|S2', 'S2|S3'];
@@ -247,19 +280,19 @@ const profileAnnotations = [];
 }});
 
 Plotly.newPlot('profile', [{{
-  x: D.prof_dist, y: D.prof_data,
+  x: D.prof_dist, y: O.prof_data,
   type: 'scatter', mode: 'lines',
   fill: 'tozeroy',
   fillgradient: {{type: 'vertical', colorscale: [[0, 'rgba(31,119,180,0)'], [1, 'rgba(31,119,180,0.45)']]}},
   line: {{color: '#1f77b4', width: 2}},
-  hovertemplate: '<b>%{{x:.0f}} m</b><br>' + D.viz_name + ': %{{y:.2f}}' + D.unit_str + '<extra></extra>',
+  hovertemplate: '<b>%{{x:.0f}} m</b><br>' + currentViz + ': %{{y:.2f}}' + O.unit_str + '<extra></extra>',
 }}], {{
   xaxis: {{title: {{text: 'Distance [m]', font: {{color: '#fff'}}}},
            tickfont: {{color: '#fff'}},
            showgrid: false, zeroline: false,
            showspikes: true, spikemode: 'across', spikesnap: 'cursor',
            spikecolor: '#FF6B00', spikethickness: 1, spikedash: 'solid'}},
-  yaxis: {{title: {{text: D.y_label, font: {{color: '#fff'}}}},
+  yaxis: {{title: {{text: O.y_label, font: {{color: '#fff'}}}},
            tickfont: {{color: '#fff'}},
            showgrid: true, gridcolor: 'rgba(128,128,128,0.15)', zeroline: false}},
   hovermode: 'x unified',
@@ -273,20 +306,22 @@ Plotly.newPlot('profile', [{{
 }}, {{responsive: true, displayModeBar: false}});
 
 // ── Track map ──────────────────────────────────────────────────
-const hoverFmt = D.viz_unit
-  ? '<b>%{{customdata[0]:.0f}} m</b><br>' + D.viz_name + ': %{{customdata[1]:.2f}} ' + D.viz_unit + '<extra></extra>'
-  : '<b>%{{customdata[0]:.0f}} m</b><br>' + D.viz_name + ': %{{customdata[1]:.2f}}<extra></extra>';
+function mapHoverFmt(name, unit) {{
+  return unit
+    ? '<b>%{{customdata[0]:.0f}} m</b><br>' + name + ': %{{customdata[1]:.2f}} ' + unit + '<extra></extra>'
+    : '<b>%{{customdata[0]:.0f}} m</b><br>' + name + ': %{{customdata[1]:.2f}}<extra></extra>';
+}}
 
 // Single colored-marker trace — one trace instead of N segment traces
 const segs = [{{
   x: D.track_x, y: D.track_y,
   type: 'scatter', mode: 'markers',
   marker: {{
-    color: D.color_vals, colorscale: D.colorscale,
+    color: O.color_vals, colorscale: O.colorscale,
     cmin: 0, cmax: 1, size: 10, showscale: false,
   }},
-  customdata: D.track_x.map((_, i) => [D.dist[i], D.vd[i]]),
-  hovertemplate: hoverFmt,
+  customdata: D.track_x.map((_, i) => [D.dist[i], O.vd[i]]),
+  hovertemplate: mapHoverFmt(currentViz, O.viz_unit),
   showlegend: false,
 }}];
 
@@ -327,6 +362,14 @@ Plotly.newPlot('trackmap', segs, {{
   paper_bgcolor: 'rgba(0,0,0,0)',
   plot_bgcolor: 'rgba(0,0,0,0)',
 }}, {{responsive: true, displayModeBar: false}});
+
+function setLegend(o) {{
+  const el = document.getElementById('legend');
+  el.textContent = o.viz_unit
+    ? 'Color: Low (' + o.data_min.toFixed(1) + ' ' + o.viz_unit + ') → High (' + o.data_max.toFixed(1) + ' ' + o.viz_unit + ')'
+    : 'Color: Low (' + o.data_min.toFixed(0) + ') → High (' + o.data_max.toFixed(0) + ')';
+}}
+setLegend(O);
 
 // ── Pulse ring overlay ─────────────────────────────────────────
 const ring = document.createElement('div');
@@ -376,17 +419,36 @@ document.getElementById('trackmap').on('plotly_hover', function(ev) {{
 document.getElementById('trackmap').on('plotly_unhover', function() {{
   Plotly.relayout('profile', {{'shapes[0].visible': false}});
 }});
+
+// ── Visualization switching (in-place, no iframe reload) ────────
+function applyViz(name) {{
+  currentViz = name;
+  const o = D.options[name];
+
+  Plotly.update('profile',
+    {{y: [o.prof_data], hovertemplate: ['<b>%{{x:.0f}} m</b><br>' + name + ': %{{y:.2f}}' + o.unit_str + '<extra></extra>']}},
+    {{'yaxis.title.text': o.y_label}},
+    [0]
+  );
+
+  Plotly.restyle('trackmap', {{
+    'marker.color': [o.color_vals],
+    'marker.colorscale': [o.colorscale],
+    customdata: [D.track_x.map((_, i) => [D.dist[i], o.vd[i]])],
+    hovertemplate: [mapHoverFmt(name, o.viz_unit)],
+  }}, [0]);
+
+  setLegend(o);
+}}
+
+document.getElementById('viz-select').addEventListener('change', function(ev) {{
+  applyViz(ev.target.value);
+}});
 </script>
 </body></html>"""
 
-    components.html(html, height=430)
-
-    if viz_unit:
-        st.caption(
-            f"Color: Low ({data_min:.1f} {viz_unit}) → High ({data_max:.1f} {viz_unit})"
-        )
-    else:
-        st.caption(f"Color: Low ({data_min:.0f}) → High ({data_max:.0f})")
+    # 400px charts + ~40px controls row (moved in-iframe from st.selectbox) + ~25px legend
+    components.html(html, height=470)
 
 
 def create_profile_chart(
