@@ -11,23 +11,58 @@ import numpy as np
 
 # Map sim track names to FastF1 GP identifiers
 TRACK_NAME_MAP = {
+    # ── legacy / generic racelines ─────────────────────────────────────────
     "Austin": "United States Grand Prix",
     "Budapest": "Hungarian Grand Prix",
     "Catalunya": "Spanish Grand Prix",
     "Hockenheim": "German Grand Prix",
     "Melbourne": "Australian Grand Prix",
     "MexicoCity": "Mexico City Grand Prix",
+    "Miami_2026_fastf1": "Miami Grand Prix",
     "Montreal": "Canadian Grand Prix",
     "Monza": "Italian Grand Prix",
     "Sakhir": "Bahrain Grand Prix",
     "SaoPaulo": "São Paulo Grand Prix",
     "Shanghai": "Chinese Grand Prix",
+    "Shanghai_2026_fastf1": "Chinese Grand Prix",
+    "Shanghai_2026_fastf1_smoothed": "Chinese Grand Prix",
     "Silverstone": "British Grand Prix",
     "Sochi": "Russian Grand Prix",
     "Spa": "Belgian Grand Prix",
     "Spielberg": "Austrian Grand Prix",
     "Suzuka": "Japanese Grand Prix",
+    "Suzuka_2026_fastF1_extracted": "Japanese Grand Prix",
     "YasMarina": "Abu Dhabi Grand Prix",
+    # ── 2025 season ───────────────────────────────────────────────────────
+    "AbuDhabiGrandPrix_2025": "Abu Dhabi Grand Prix",
+    "AustralianGrandPrix_2025": "Australian Grand Prix",
+    "AustrianGrandPrix_2025": "Austrian Grand Prix",
+    "AzerbaijanGrandPrix_2025": "Azerbaijan Grand Prix",
+    "BahrainGrandPrix_2025": "Bahrain Grand Prix",
+    "BelgianGrandPrix_2025": "Belgian Grand Prix",
+    "BritishGrandPrix_2025": "British Grand Prix",
+    "CanadianGrandPrix_2025": "Canadian Grand Prix",
+    "ChineseGrandPrix_2025": "Chinese Grand Prix",
+    "DutchGrandPrix_2025": "Dutch Grand Prix",
+    "EmiliaRomagnaGrandPrix_2025": "Emilia Romagna Grand Prix",
+    "HungarianGrandPrix_2025": "Hungarian Grand Prix",
+    "ItalianGrandPrix_2025": "Italian Grand Prix",
+    "JapaneseGrandPrix_2025": "Japanese Grand Prix",
+    "LasVegasGrandPrix_2025": "Las Vegas Grand Prix",
+    "MexicoCityGrandPrix_2025": "Mexico City Grand Prix",
+    "MiamiGrandPrix_2025": "Miami Grand Prix",
+    "MonacoGrandPrix_2025": "Monaco Grand Prix",
+    "QatarGrandPrix_2025": "Qatar Grand Prix",
+    "SãoPauloGrandPrix_2025": "São Paulo Grand Prix",
+    "SaudiArabianGrandPrix_2025": "Saudi Arabian Grand Prix",
+    "SingaporeGrandPrix_2025": "Singapore Grand Prix",
+    "SpanishGrandPrix_2025": "Spanish Grand Prix",
+    "UnitedStatesGrandPrix_2025": "United States Grand Prix",
+    # ── 2026 season ───────────────────────────────────────────────────────
+    "AustralianGrandPrix_2026": "Australian Grand Prix",
+    "ChineseGrandPrix_2026": "Chinese Grand Prix",
+    "JapaneseGrandPrix_2026": "Japanese Grand Prix",
+    "MiamiGrandPrix_2026": "Miami Grand Prix",
 }
 
 
@@ -47,7 +82,7 @@ def setup_cache():
 
 def get_available_years():
     """Return list of years with F1 data available via FastF1."""
-    return list(range(2018, 2027))
+    return list(range(2018, 2028))
 
 
 def get_available_gps(sim_tracks: list[str]) -> dict[str, str]:
@@ -60,11 +95,7 @@ def get_available_gps(sim_tracks: list[str]) -> dict[str, str]:
     Returns:
         Dict mapping sim track name -> FastF1 GP name
     """
-    return {
-        track: gp
-        for track, gp in TRACK_NAME_MAP.items()
-        if track in sim_tracks
-    }
+    return {track: gp for track, gp in TRACK_NAME_MAP.items() if track in sim_tracks}
 
 
 def load_speed_trace(

@@ -118,6 +118,12 @@ def get_viz_options(result: SimulationResult) -> dict:
             "unit": "kW",
             "colorscale": cs,
         }
+    if result.harvest_energy_profile is not None:
+        options["Harvest Energy"] = {
+            "data": result.harvest_energy_profile,
+            "unit": "kJ",
+            "colorscale": cs,
+        }
 
     return options
 
@@ -163,6 +169,10 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
     y_label = f"{selected_viz} [{viz_unit}]" if viz_unit else selected_viz
     unit_str = f" {viz_unit}" if viz_unit else ""
 
+    sector_dists = result.sector_distances if result.sector_distances else []
+    sector_x = [xy[0] for xy in result.sector_xy] if result.sector_xy else []
+    sector_y = [xy[1] for xy in result.sector_xy] if result.sector_xy else []
+
     payload = json.dumps(
         {
             "prof_dist": result.distance.tolist(),
@@ -177,6 +187,9 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
             "y_label": y_label,
             "unit_str": unit_str,
             "viz_unit": viz_unit,
+            "sector_dists": sector_dists,
+            "sector_x": sector_x,
+            "sector_y": sector_y,
         }
     )
 
@@ -208,6 +221,31 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
 const D = {payload};
 
 // ── Profile chart ──────────────────────────────────────────────
+const sectorLabels = ['S1|S2', 'S2|S3'];
+const sectorColors = ['#f0e040', '#40e0f0'];
+const profileShapes = [{{
+  type: 'line', xref: 'x', yref: 'paper',
+  x0: 0, x1: 0, y0: 0, y1: 1,
+  line: {{color: 'red', width: 1, dash: 'dot'}},
+  visible: false,
+}}];
+const profileAnnotations = [];
+(D.sector_dists || []).forEach(function(d, i) {{
+  profileShapes.push({{
+    type: 'line', xref: 'x', yref: 'paper',
+    x0: d, x1: d, y0: 0, y1: 1,
+    line: {{color: sectorColors[i], width: 1, dash: 'dash'}},
+  }});
+  profileAnnotations.push({{
+    xref: 'x', yref: 'paper',
+    x: d, y: 1,
+    text: sectorLabels[i],
+    showarrow: false,
+    xanchor: 'center', yanchor: 'bottom',
+    font: {{color: sectorColors[i], size: 11}},
+  }});
+}});
+
 Plotly.newPlot('profile', [{{
   x: D.prof_dist, y: D.prof_data,
   type: 'scatter', mode: 'lines',
@@ -230,12 +268,8 @@ Plotly.newPlot('profile', [{{
   margin: {{l:60, r:20, t:20, b:50}},
   paper_bgcolor: 'rgba(0,0,0,0)',
   plot_bgcolor: 'rgba(0,0,0,0)',
-  shapes: [{{
-    type: 'line', xref: 'x', yref: 'paper',
-    x0: 0, x1: 0, y0: 0, y1: 1,
-    line: {{color: 'red', width: 1, dash: 'dot'}},
-    visible: false,
-  }}],
+  shapes: profileShapes,
+  annotations: profileAnnotations,
 }}, {{responsive: true, displayModeBar: false}});
 
 // ── Track map ──────────────────────────────────────────────────
@@ -263,6 +297,16 @@ segs.push({{
   marker: {{size: 12, color: 'white', line: {{color: 'black', width: 2}}}},
   showlegend: false, hoverinfo: 'skip',
 }});
+
+// Sector boundary markers
+if (D.sector_x && D.sector_x.length) {{
+  segs.push({{
+    x: D.sector_x, y: D.sector_y,
+    type: 'scatter', mode: 'markers',
+    marker: {{size: 10, color: sectorColors, line: {{color: 'black', width: 1}}}},
+    showlegend: false, hoverinfo: 'skip',
+  }});
+}}
 
 // Cursor dot (moved on profile hover)
 const cursorIdx = segs.length;

@@ -53,11 +53,13 @@ if "fastf1_trace" not in st.session_state:
 
 class AbortException(Exception):
     """Raised when user aborts the optimization."""
+
     pass
 
 
 class EarlyStopException(Exception):
     """Raised when optimization has not improved sufficiently for N iterations."""
+
     pass
 
 
@@ -293,7 +295,9 @@ def run_grid_search(
                             if no_improve_count >= 10:
                                 raise EarlyStopException()
     except EarlyStopException:
-        log_container.write("Early stopping: no improvement > 0.001 for 10 consecutive evaluations.")
+        log_container.write(
+            "Early stopping: no improvement > 0.001 for 10 consecutive evaluations."
+        )
     except AbortException:
         # Log best result found before abort
         if best_params is not None:
@@ -463,7 +467,9 @@ def run_nelder_mead(
             sim_vel,
         )
     except EarlyStopException:
-        log_container.write("Early stopping: no improvement > 0.001 for 10 consecutive evaluations.")
+        log_container.write(
+            "Early stopping: no improvement > 0.001 for 10 consecutive evaluations."
+        )
         return tuple(best_result)
     except AbortException:
         raise
@@ -593,7 +599,9 @@ def run_trust_constr(
         else:
             no_improve_count[0] += 1
         if no_improve_count[0] >= 10:
-            log_container.write("Early stopping: no improvement > 0.001 for 10 consecutive iterations.")
+            log_container.write(
+                "Early stopping: no improvement > 0.001 for 10 consecutive iterations."
+            )
             return True  # trust-constr stops when callback returns True
         return False
 
@@ -638,7 +646,9 @@ def run_trust_constr(
             sim_vel,
         )
     except EarlyStopException:
-        log_container.write("Early stopping: no improvement > 0.001 for 10 consecutive evaluations.")
+        log_container.write(
+            "Early stopping: no improvement > 0.001 for 10 consecutive evaluations."
+        )
         return tuple(best_result)
     except AbortException:
         raise
@@ -768,7 +778,9 @@ def run_lbfgsb(
         else:
             no_improve_count[0] += 1
         if no_improve_count[0] >= 10:
-            log_container.write("Early stopping: no improvement > 0.001 for 10 consecutive iterations.")
+            log_container.write(
+                "Early stopping: no improvement > 0.001 for 10 consecutive iterations."
+            )
             raise EarlyStopException()
 
     try:
@@ -812,7 +824,9 @@ def run_lbfgsb(
             sim_vel,
         )
     except EarlyStopException:
-        log_container.write("Early stopping: no improvement > 0.001 for 10 consecutive evaluations.")
+        log_container.write(
+            "Early stopping: no improvement > 0.001 for 10 consecutive evaluations."
+        )
         return tuple(best_result)
     except AbortException:
         raise
@@ -843,11 +857,17 @@ st.sidebar.header("Simulation Settings")
 with st.sidebar.expander("Track Processing"):
     interp_stepsize = st.slider(
         "Interpolation Step Size [m]",
-        min_value=1.0, max_value=20.0, value=5.0, step=1.0,
+        min_value=1.0,
+        max_value=20.0,
+        value=5.0,
+        step=1.0,
     )
     curv_filt_width = st.slider(
         "Curvature Filter Width [m]",
-        min_value=0.0, max_value=30.0, value=10.0, step=1.0,
+        min_value=0.0,
+        max_value=30.0,
+        value=10.0,
+        step=1.0,
         help="Set to 0 to disable filtering",
     )
     curv_filt = curv_filt_width if curv_filt_width > 0 else None
@@ -874,6 +894,7 @@ if target_source == "FastF1 Telemetry":
     if not fastf1_tracks:
         st.sidebar.warning("No tracks with FastF1 mapping available.")
     else:
+        ff1_year = st.sidebar.selectbox("Year", options=get_available_years(), index=8)
         ff1_track = st.sidebar.selectbox(
             "GP Track",
             options=fastf1_tracks,
@@ -883,7 +904,6 @@ if target_source == "FastF1 Telemetry":
         # Sync track selection with FastF1 track
         track = ff1_track
 
-        ff1_year = st.sidebar.selectbox("Year", options=get_available_years(), index=8)
         ff1_session = st.sidebar.radio(
             "Session",
             options=["Q", "R"],
@@ -1029,9 +1049,9 @@ mu_weather = st.sidebar.slider(
 
 em_strategy = st.sidebar.selectbox(
     "Energy Strategy",
-    options=["ERSO", "FCFB", "LBP", "LS", "NONE"],
+    options=["ERSO", "FCFB", "LBP", "LS", "QUALY", "NONE"],
     index=0,
-    help="ERSO: energy-recuperation strategy optimizer. FCFB: full charge full boost. LBP: lap-based planning. LS: lift-and-coast strategy. NONE: no strategy.",
+    help="ERSO: energy-recuperation strategy optimizer. FCFB: full charge full boost. LBP: lap-based planning. LS: lift-and-coast strategy. QUALY: qualifying (spends Initial Energy + lap recovery optimally). NONE: no strategy.",
 )
 
 default_energy_j = 4.0e6
@@ -1488,14 +1508,16 @@ if st.session_state.param_id_result is not None:
     st.divider()
     st.header("Identified Parameters")
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.metric("Drag (c_w × A)", f"{res['c_w_a']:.2f} m²")
     with col2:
         st.metric("Total Downforce (c_z × A)", f"{res['c_z_a_total']:.2f} m²")
     with col3:
-        st.metric("Mass", f"{res['mass']:.0f} kg")
+        st.metric("Cl/Cd", f"{res['c_z_a_total'] / res['c_w_a']:.2f}")
     with col4:
+        st.metric("Mass", f"{res['mass']:.0f} kg")
+    with col5:
         st.metric("Power", f"{res['pow_max'] / 1e3:.0f} kW")
 
     st.caption(

@@ -480,9 +480,9 @@ st.sidebar.subheader("Driver & Strategy")
 
 em_strategy = st.sidebar.selectbox(
     "Energy Management Strategy",
-    options=["FCFB", "LBP", "LS", "ERSO", "NONE"],
+    options=["FCFB", "LBP", "LS", "ERSO", "QUALY", "NONE"],
     index=0,
-    help="FCFB=First Come First Boost, LBP=Longest to Breakpoint, LS=Lowest Speed",
+    help="FCFB=First Come First Boost, LBP=Longest to Breakpoint, LS=Lowest Speed, QUALY=Qualifying (spends Initial Energy + lap recovery optimally)",
 )
 
 from helpers.simulation import DEFAULT_VEHICLE, VEHICLE_DEFAULTS

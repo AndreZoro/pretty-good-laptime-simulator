@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import ast
 import trajectory_planning_helpers as tph
 import configparser
-from scipy.interpolate import CubicSpline
 
 
 class Track(object):
@@ -55,16 +54,18 @@ class Track(object):
 
         self.pars_track.update(pars_track_tmp[self.pars_track["trackname"]])
 
-        # load raceline (supports [x, y], [x, y, kappa], or [x, y, z] columns)
-        # read header comment to determine if col 2 is kappa or z
+        # load raceline (supports [x, y], [x, y, kappa], [x, y, z], or [x, y, z, kappa] columns)
+        # find kappa by column name so the column order doesn't matter
         with open(trackfilepath, 'r') as _f:
             _header = _f.readline().lstrip('#').strip()
         _col_names = [c.strip() for c in _header.split(',')]
         _raceline_raw = np.loadtxt(trackfilepath, comments='#', delimiter=',')
-        _col2_is_kappa = (_raceline_raw.shape[1] >= 3
-                          and len(_col_names) >= 3
-                          and 'kappa' in _col_names[2].lower())
-        self._kappa_precomputed = _raceline_raw[:, 2] if _col2_is_kappa else None
+        _kappa_col = next((i for i, n in enumerate(_col_names) if 'kappa' in n.lower()), None)
+        self._kappa_precomputed = (
+            _raceline_raw[:, _kappa_col]
+            if _kappa_col is not None and _raceline_raw.shape[1] > _kappa_col
+            else None
+        )
         self.raceline = _raceline_raw[:, :2]
 
         # set friction values artificially as long as no real friction values available and limit them to a valid range
@@ -262,8 +263,11 @@ class Track(object):
         # if kappa was pre-computed by the raceline optimizer and stored in the CSV, interpolate it to the new
         # stepsize; otherwise fall back to computing it analytically from the spline
         if self._kappa_precomputed is not None:
-            cs = CubicSpline(dists_cl_preinterp[:-1], self._kappa_precomputed)
-            self.kappa = cs(self.dists_cl[:-1])
+            # Close the kappa array the same way the raceline is closed: append kappa[0] at
+            # dists_cl_preinterp[-1] (full track length).  Without this, interpolation extrapolates
+            # into the gap between the last GPS sample and the closing spline segment → kappa spikes.
+            kappa_cl = np.append(self._kappa_precomputed, self._kappa_precomputed[0])
+            self.kappa = np.interp(self.dists_cl[:-1], dists_cl_preinterp, kappa_cl)
         else:
             self.kappa = tph.calc_head_curv_an.calc_head_curv_an(coeffs_x=coeffs_x_cl,
                                                                   coeffs_y=coeffs_y_cl,

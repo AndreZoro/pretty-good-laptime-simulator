@@ -48,7 +48,7 @@ class Driver(object):
         # set initial energy management strategy -> em_boost_use contains where e_motor boost can be applied
         if self.pars_driver["em_strategy"] == "FCFB":
             self.em_boost_use = np.full(trackobj.no_points, True)
-        elif self.pars_driver["em_strategy"] in ["LBP", "LS", "ERSO", "NONE"]:
+        elif self.pars_driver["em_strategy"] in ["LBP", "LS", "ERSO", "QUALY", "NONE"]:
             self.em_boost_use = np.full(trackobj.no_points, False)
         else:
             raise IOError("Unknown energy management strategy!")
@@ -111,7 +111,7 @@ class Driver(object):
 
         if self.pars_driver["em_strategy"] == "FCFB":
             self.em_boost_use = np.full(trackobj.no_points, True)
-        elif self.pars_driver["em_strategy"] in ["LBP", "LS", "ERSO", "NONE"]:
+        elif self.pars_driver["em_strategy"] in ["LBP", "LS", "ERSO", "QUALY", "NONE"]:
             self.em_boost_use = np.full(trackobj.no_points, False)
         else:
             raise IOError("Unknown energy management strategy!")
@@ -133,7 +133,10 @@ class Driver(object):
             self.throttle_pos[trackobj.zone_inds["s23"]:] = self.pars_driver["yellow_throttle"]
 
     def calc_em_boost_use(self, t_cl: np.ndarray, vel_cl: np.ndarray, n_cl: np.ndarray, m_requ: np.ndarray,
-                          es_final: float):
+                          es_final: float, e_rec_max: float = 8e6, p_rec_max: float = 350e3,
+                          e_rec_actual: float = None, e_rec_braking: float = None, e_rec_etc: float = 0.0,
+                          es_initial: float = 0.0,
+                          kappa: np.ndarray = None, ers_harvest_speed: float = None):
         if self.pars_driver["em_strategy"] == "LBP":
             self.__strategy_lbp(t_cl=t_cl,
                                 vel_cl=vel_cl,
@@ -153,7 +156,25 @@ class Driver(object):
                                  vel_cl=vel_cl,
                                  n_cl=n_cl,
                                  m_requ=m_requ,
-                                 es_final=es_final)
+                                 es_final=es_final,
+                                 e_rec_max=e_rec_max,
+                                 p_rec_max=p_rec_max,
+                                 e_rec_actual=e_rec_actual,
+                                 e_rec_braking=e_rec_braking,
+                                 e_rec_etc=e_rec_etc)
+
+        elif self.pars_driver["em_strategy"] == "QUALY":
+            self.__strategy_qualy(t_cl=t_cl,
+                                  vel_cl=vel_cl,
+                                  n_cl=n_cl,
+                                  m_requ=m_requ,
+                                  es_initial=es_initial,
+                                  e_rec_max=e_rec_max,
+                                  p_rec_max=p_rec_max,
+                                  e_rec_actual=e_rec_actual,
+                                  e_rec_etc=e_rec_etc,
+                                  kappa=kappa,
+                                  ers_harvest_speed=ers_harvest_speed)
 
         elif self.pars_driver["em_strategy"] == "FCFB" and self.pars_driver["use_lift_coast"]:
             # set array where throttle is 0.0 when driving in lift and coast condition
@@ -257,66 +278,285 @@ class Driver(object):
                                                                     m_e_motor=np.array(m_e_motor))
                              * (t_cl[ind_cur + 1] - t_cl[ind_cur]))
 
+    @staticmethod
+    def __time_to_next_event(t_cl: np.ndarray, event_mask: np.ndarray) -> np.ndarray:
+        """Time until the next braking/corner event for every unclosed point (lap is cyclic).
+
+        This is the persistence horizon of any force applied at a point: a speed gain
+        (deploy) or deficit (harvest drag) is carried until the car brakes or enters a
+        sharp corner anyway, after which it is absorbed. The per-Joule lap-time value of
+        force at point i is therefore ~ tau_i / v_i^2 — this single quantity prices both
+        deployment (gain) and active harvest (cost)."""
+
+        no_points = event_mask.size
+        t_u = t_cl[:no_points]
+        t_lap = float(t_cl[-1])
+        evt_inds = np.flatnonzero(event_mask)
+        if evt_inds.size == 0:
+            return np.full(no_points, t_lap)
+
+        evt_times = t_u[evt_inds]
+        pos = np.searchsorted(evt_times, t_u)
+        next_evt_t = np.where(pos < evt_inds.size,
+                              evt_times[np.minimum(pos, evt_inds.size - 1)],
+                              evt_times[0] + t_lap)
+        return next_evt_t - t_u
+
     def __strategy_erso(self, t_cl: np.ndarray, vel_cl: np.ndarray, n_cl: np.ndarray, m_requ: np.ndarray,
-                        es_final: float):
-        """erso = ERS-optimized. Ranks deployment points by available ERS power / velocity, which is proportional to
-        the acceleration force per watt. This naturally favors corner exits (full ERS power, low speed) over straights
-        (curtailed power, high speed). For cars without ers_speed_limit, degenerates to LS behavior.
+                        es_final: float, e_rec_max: float = 8e6, p_rec_max: float = 350e3,
+                        e_rec_actual: float = None, e_rec_braking: float = None, e_rec_etc: float = 0.0):
+        """erso = ERS-optimized, charge-sustaining race strategy. Every point is priced by its
+        persistence-weighted per-Joule value tau / v^2 (see __time_to_next_event). A single
+        bisection finds the price threshold T at which planned spending equals planned income:
 
-        Additionally enables active harvesting at high-speed points where deployment is curtailed, allowing the MGU-K
-        to act as a generator to charge the battery for more effective deployment at corner exits."""
+            E_deploy(T) = min(e_rec_braking + E_harvest(T), e_rec_max)
 
-        # input check: energy store
-        if es_final < 0.0:
-            print("WARNING: ES charge state already negative when entering EM strategy calculation!")
+        Deploy where value >= T; actively harvest at eligible non-deploy points where the drag
+        cost (the same tau / v^2) is below eta_e_motor_re * T, i.e. the recovered energy
+        redeploys at a profit. E_deploy falls and E_harvest rises with T, so the equilibrium is
+        unique. Braking regen (e_rec_braking, from the previous solver run) is free income — it
+        happens anyway; the active-harvest income is planned self-consistently WITHIN this call
+        rather than read back from the previous run, which removes the lagged budget feedback
+        between EM iterations that caused lap-time oscillation. If braking regen alone covers
+        deployment everywhere, active harvest is worthless and is skipped entirely."""
 
         no_points = t_cl.size - 1
+        dt = np.diff(t_cl)
+
         has_speed_limit = hasattr(self.carobj, 'pow_e_motor_max') and \
             self.carobj.pars_engine.get("ers_speed_limit", False)
         pow_e = self.carobj.pars_engine["pow_e_motor"]
 
-        # compute efficiency score for each point: available ERS power / velocity
+        # available ERS power (zero above the speed limit -> point cannot deploy)
         if has_speed_limit:
             pow_avail = np.array([self.carobj.pow_e_motor_max(vel_cl[i]) for i in range(no_points)])
-            score = pow_avail / np.maximum(vel_cl[:no_points], 1.0)
         else:
             pow_avail = np.full(no_points, pow_e)
-            score = pow_e / np.maximum(vel_cl[:no_points], 1.0)
 
-        # sort by score descending (highest efficiency first)
-        inds_sorted = np.argsort(-score)
-        sorted_idx = 0
+        # persistence horizon: force effects last until the next braking event
+        # (decel well beyond aero drag, ~1 g)
+        is_braking = (np.diff(vel_cl) / dt) < -15.0
+        tau = self.__time_to_next_event(t_cl, is_braking)
 
-        while es_final > 0.0 and sorted_idx < len(inds_sorted):
-            ind_cur = inds_sorted[sorted_idx]
-            sorted_idx += 1
+        # per-Joule value of force at each point: a speed change is worth ~ tau_i / v_i^2 s/J.
+        # The same quantity prices deployment (gain) and active harvest drag (cost).
+        vel_u = np.maximum(vel_cl[:no_points], 1.0)
+        value = tau / vel_u ** 2
+        deploy_score = np.where(pow_avail > 0.0, value, 0.0)
 
-            # skip points with zero score (no ERS power available at this speed)
-            if score[ind_cur] <= 0.0:
-                break
+        # precompute actual energy consumed per step if deploying (uses real motor torque model)
+        e_deploy_step = np.zeros(no_points)
+        for i in range(no_points):
+            if deploy_score[i] > 0.0:
+                m_e_motor_val = self.carobj.calc_torque_distr(n=n_cl[i],
+                                                              m_requ=m_requ[i],
+                                                              throttle_pos=self.throttle_pos[i],
+                                                              es=np.inf,
+                                                              em_boost_use=True,
+                                                              vel=vel_cl[i])[1]
+                e_deploy_step[i] = (self.carobj.power_demand_e_motor_drive(n=n_cl[i],
+                                                                            m_e_motor=np.array(m_e_motor_val))
+                                    * dt[i])
 
-            if not self.em_boost_use[ind_cur]:
-                self.em_boost_use[ind_cur] = True
+        # harvest eligibility
+        harvest_speed_min = self.pars_driver.get("ers_harvest_speed_min", 150.0 / 3.6)  # [m/s]
+        harvest_eligible = vel_cl[:no_points] >= harvest_speed_min
 
-                # calculate torque distribution within the hybrid system
-                m_e_motor = self.carobj.calc_torque_distr(n=n_cl[ind_cur],
-                                                          m_requ=m_requ[ind_cur],
-                                                          throttle_pos=self.throttle_pos[ind_cur],
-                                                          es=np.inf,
-                                                          em_boost_use=True,
-                                                          vel=vel_cl[ind_cur])[1]
+        # planned battery energy per step when actively harvesting (mirrors the solver's
+        # harvest model: MGU-K as generator at p_harvest_straight, recovered at eta_e_motor_re)
+        eta_re = self.carobj.pars_engine.get("eta_e_motor_re", 0.0)
+        p_harvest = self.carobj.pars_engine.get("p_harvest_straight", p_rec_max)
+        e_harvest_step = np.where(harvest_eligible, eta_re * p_harvest * dt, 0.0)
 
-                # update energy store status (approximation because velocity profile is influenced obviously)
-                es_final -= (self.carobj.power_demand_e_motor_drive(n=n_cl[ind_cur],
-                                                                    m_e_motor=np.array(m_e_motor))
-                             * (t_cl[ind_cur + 1] - t_cl[ind_cur]))
+        # free income: braking regen (MGU-K, subject to e_rec_max) plus electric turbocharger
+        # recovery (charges the ES from the ICE, not capped) — both from the previous solver
+        # run, recovered regardless of this plan. Fall back to total recovery / es_final if
+        # the regen split is not available.
+        if e_rec_braking is not None:
+            e_regen = min(e_rec_braking, e_rec_max)
+        elif e_rec_actual is not None:
+            e_regen = min(e_rec_actual, e_rec_max)
+        else:
+            e_regen = max(0.0, es_final)
 
-        # active harvesting: at high-speed points where deployment is curtailed, enable MGU-K generator mode
+        # deploy saturated: free income alone covers deployment at every scoring point, so
+        # actively harvested energy could never be spent — deploy everywhere, no harvest
+        if float(np.sum(e_deploy_step)) <= e_regen + e_rec_etc:
+            self.em_boost_use[:no_points] = deploy_score > 0.0
+            self.em_harvest_use[:no_points] = False
+            return
+
+        # bisection on the price threshold T for the self-consistent equilibrium
+        # E_deploy(T) = min(e_regen + E_harvest(T), e_rec_max). Deploy points (value >= T) are
+        # corner exits (low speed, long persistence); harvest points (value <= eta_re * T) are
+        # late-straight stretches just before braking (short persistence, cheap drag). E_deploy
+        # falls and income rises with T, so the balance is monotone and the root unique.
+        def _masks(T):
+            d_mask = deploy_score >= T
+            h_mask = harvest_eligible & ~d_mask & (value <= eta_re * T)
+            return d_mask, h_mask
+
+        lo = 0.0
+        hi = float(deploy_score.max()) if deploy_score.max() > 0.0 else 1.0
+
+        for _ in range(60):
+            T_mid = (lo + hi) * 0.5
+            d_mask, h_mask = _masks(T_mid)
+            E_dep = float(np.sum(e_deploy_step[d_mask]))
+            income = min(e_regen + float(np.sum(e_harvest_step[h_mask])), e_rec_max) + e_rec_etc
+            if E_dep > income:
+                lo = T_mid  # price too low — over-deploying / under-harvesting
+            else:
+                hi = T_mid  # affordable — try deploying more
+
+        # apply final threshold (hi guarantees E_deploy <= income)
+        deploy_mask, harvest_mask = _masks(hi)
+
+        self.em_boost_use[:no_points] = deploy_mask
+        self.em_harvest_use[:no_points] = harvest_mask
+
+    def __strategy_qualy(self, t_cl: np.ndarray, vel_cl: np.ndarray, n_cl: np.ndarray, m_requ: np.ndarray,
+                         es_initial: float, e_rec_max: float = 8e6, p_rec_max: float = 350e3,
+                         e_rec_actual: float = None, e_rec_etc: float = 0.0, kappa: np.ndarray = None,
+                         ers_harvest_speed: float = None):
+        """qualy = Qualifying lap strategy. Jointly optimizes harvest and deployment for a single lap
+        where the car starts with a known battery charge (es_initial) and may end with any state
+        in [0, es_max]. Budget = es_initial + energy recovered this lap.
+
+        Deploy: acceleration phases where throttle >= 95% and |kappa| < kappa_max_deploy,
+                ranked by persistence-weighted per-Joule value tau / v^2 (see
+                __time_to_next_event) with a binary search on the price threshold T.
+        Harvest: high-speed low-curvature phases, not already deploying, where the drag cost
+                 (the same tau / v^2) is below eta_e_motor_re * T, i.e. the recovered energy
+                 redeploys at a profit. No active harvest at all if the budget already covers
+                 deployment everywhere.
+        Braking regen: handled automatically by the solver — not part of this strategy mask.
+
+        Deployment budget = es_initial + total e-motor recovery from the previous solver run.
+        On the first call e_rec_actual is None, so only es_initial is available."""
+
+        no_points = t_cl.size - 1
+        dt = np.diff(t_cl)
+
+        has_speed_limit = hasattr(self.carobj, 'pow_e_motor_max') and \
+            self.carobj.pars_engine.get("ers_speed_limit", False)
+        pow_e = self.carobj.pars_engine["pow_e_motor"]
+
+        # curvature gate: deploy/harvest only on low-curvature sections (straights and gentle bends)
+        kappa_max = self.pars_driver.get("kappa_max_deploy", 0.01)  # [1/m] default ≈ 100 m radius
+        if kappa is not None:
+            is_low_curv = np.abs(kappa[:no_points]) < kappa_max
+        else:
+            is_low_curv = np.ones(no_points, dtype=bool)
+
+        # throttle gate: deploy/harvest only at full throttle (filters yellow-flag zones)
+        is_full_throttle = self.throttle_pos[:no_points] >= 0.95
+
+        # acceleration gate: deploy/harvest only where the car is accelerating
+        vel_diff = np.diff(vel_cl[:no_points + 1])
+        is_acc = vel_diff > 0
+
+        # combined deploy eligibility
+        deploy_eligible = is_acc & is_full_throttle & is_low_curv
+
+        # available ERS power (zero above the speed limit -> point cannot deploy)
         if has_speed_limit:
-            harvest_threshold = self.pars_driver.get("ers_harvest_threshold", 0.3)
-            for i in range(no_points):
-                if not self.em_boost_use[i] and pow_avail[i] < harvest_threshold * pow_e:
-                    self.em_harvest_use[i] = True
+            pow_avail = np.array([self.carobj.pow_e_motor_max(vel_cl[i]) for i in range(no_points)])
+        else:
+            pow_avail = np.full(no_points, pow_e)
+
+        # persistence horizon: force effects last until the next braking point or sharp corner
+        # (the same events that release the harvest latch below).
+        # braking_threshold separates aero+harvest drag (~0.5-0.7 m/s/step) from braking (>1.5).
+        braking_threshold = self.pars_driver.get("qualy_braking_threshold", 1.5)  # [m/s per step]
+        is_braking = vel_diff < -braking_threshold
+        tau = self.__time_to_next_event(t_cl, is_braking | ~is_low_curv)
+
+        # per-Joule deploy value: a speed gain at point i is worth ~ tau_i / v_i^2 s/J,
+        # zero at ineligible points
+        vel_u = np.maximum(vel_cl[:no_points], 1.0)
+        deploy_score = np.where(deploy_eligible & (pow_avail > 0.0), tau / vel_u ** 2, 0.0)
+
+        # precompute actual energy consumed per step if deploying (uses real motor torque model)
+        e_deploy_step = np.zeros(no_points)
+        for i in range(no_points):
+            if deploy_score[i] > 0.0:
+                m_e_motor_val = self.carobj.calc_torque_distr(n=n_cl[i],
+                                                              m_requ=m_requ[i],
+                                                              throttle_pos=self.throttle_pos[i],
+                                                              es=np.inf,
+                                                              em_boost_use=True,
+                                                              vel=vel_cl[i])[1]
+                e_deploy_step[i] = (self.carobj.power_demand_e_motor_drive(n=n_cl[i],
+                                                                            m_e_motor=np.array(m_e_motor_val))
+                                    * dt[i])
+
+        # harvest speed threshold [m/s]
+        harvest_speed_min = ers_harvest_speed if ers_harvest_speed is not None \
+            else self.pars_driver.get("ers_harvest_speed_min", 250.0 / 3.6)  # [m/s]
+
+        # deployment budget: starting charge plus all energy recovered this lap (MGU-K plus
+        # uncapped electric turbocharger recovery). e_rec_max caps only the MGU-K part (per-lap
+        # FIA recovery limit) — the starting charge is limited by the battery capacity instead.
+        es_max = self.carobj.pars_engine.get("max_e_energy_storage", np.inf)
+        e_deploy_budget = min(es_initial, es_max) + e_rec_etc
+        if e_rec_actual is not None:
+            e_deploy_budget += min(e_rec_actual, e_rec_max)
+
+        # deploy saturated: budget covers deployment at every eligible point, so additional
+        # recovered energy could never be spent — deploy everywhere, no active harvest
+        if float(np.sum(e_deploy_step)) <= e_deploy_budget:
+            self.em_boost_use[:no_points] = deploy_score > 0.0
+            self.em_harvest_use[:no_points] = False
+            return
+
+        # binary search for threshold T: find lowest T where total planned deploy <= budget
+        lo = 0.0
+        hi = float(deploy_score.max()) if deploy_score.max() > 0.0 else 1.0
+
+        for _ in range(60):
+            T_mid = (lo + hi) * 0.5
+            d_mask = deploy_score >= T_mid
+            E_deploy = float(np.sum(e_deploy_step[d_mask]))
+            if E_deploy > e_deploy_budget:
+                lo = T_mid
+            else:
+                hi = T_mid
+
+        T_final = hi
+        deploy_mask = deploy_score >= T_final
+
+        # Harvest latch:
+        #   START  — speed >= threshold, full throttle, low curvature, profitable (see below;
+        #            no is_acc gate here: gentle deceleration from aero + generator drag is
+        #            expected and intentional)
+        #   CONTINUE — latch holds as long as not braking and not in sharp corner
+        #   STOP   — car hits brakes (vel drop > braking_threshold per 5 m step),
+        #            OR deploy zone resumes (corner exit), OR sharp corner entered.
+        # After braking the braking regen path runs automatically; harvest restarts only
+        # when speed exceeds the threshold again on the next straight.
+        #
+        # Cost-benefit gate: harvesting 1 J at the wheels costs tau/v^2 lap time and returns
+        # eta_e_motor_re J redeployed at marginal value T_final. Points price out into deploy
+        # (value >= T), harvest (value <= eta_re * T) or neither (the dead band between). tau
+        # shrinks toward each event, so once the trigger fires the rest of the latch window is
+        # profitable too.
+        eta_re = self.carobj.pars_engine.get("eta_e_motor_re", 0.0)
+        econ_ok = tau / vel_u ** 2 <= eta_re * T_final
+        harvest_trigger = is_full_throttle & is_low_curv & econ_ok \
+            & (vel_cl[:no_points] >= harvest_speed_min)
+
+        harvest_mask = np.zeros(no_points, dtype=bool)
+        in_harvest = False
+        for i in range(no_points):
+            if is_braking[i] or deploy_mask[i] or not is_low_curv[i]:
+                in_harvest = False
+            elif harvest_trigger[i]:
+                in_harvest = True
+            harvest_mask[i] = in_harvest and not deploy_mask[i]
+
+        self.em_boost_use[:no_points] = deploy_mask
+        self.em_harvest_use[:no_points] = harvest_mask
 
     def __lift_coast(self, vel_cl: np.ndarray, n_lac: int):
         """Velocity input in m/s, n_lac is the number of points without throttle in front of a brake point."""

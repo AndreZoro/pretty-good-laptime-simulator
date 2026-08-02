@@ -41,6 +41,8 @@ class Lap(object):
         "__e_rec_e_motor",
         "__a_x_final",
         "__e_rec_e_motor_max",
+        "__p_rec_max",
+        "__p_harvest_straight",
         "__pars_solver",
         "__debug_opts",
         "__fuel_cons_cl",
@@ -109,9 +111,17 @@ class Lap(object):
             (trackobj.no_points, 4)
         )  # [N] tire loads [FL, FR, RL, RR]
 
-        # [J/lap] maximum amount of energy allowed to recuperate in e motor (from vehicle config)
-        self.e_rec_e_motor_max = self.driverobj.carobj.pars_engine.get(
-            "e_rec_e_motor_max", np.inf
+        # [J/lap] maximum harvestable energy: min of vehicle limit and per-track FIA limit (default 8 MJ)
+        _vehicle_rec_max = self.driverobj.carobj.pars_engine.get("e_rec_e_motor_max", np.inf)
+        _track_rec_max = self.trackobj.pars_track.get("e_rec_max", 8e6)
+        self.e_rec_e_motor_max = min(_vehicle_rec_max, _track_rec_max)
+        _vehicle_p_rec = self.driverobj.carobj.pars_engine.get("pow_e_motor", 350e3)
+        _track_p_rec = self.trackobj.pars_track.get("p_rec_max", 350e3)
+        self.p_rec_max = min(_vehicle_p_rec, _track_p_rec)
+        # [W] power cap for active MGU-K harvest on straights — separate from braking regen which
+        # always uses p_rec_max. Defaults to p_rec_max if not specified in the vehicle config.
+        self.p_harvest_straight = self.driverobj.carobj.pars_engine.get(
+            "p_harvest_straight", self.p_rec_max
         )
         self.e_es_to_e_motor_max = self.driverobj.carobj.pars_engine.get(
             "e_es_to_e_motor_max", np.inf
@@ -230,6 +240,22 @@ class Lap(object):
 
     e_rec_e_motor_max = property(__get_e_rec_e_motor_max, __set_e_rec_e_motor_max)
 
+    def __get_p_rec_max(self) -> float:
+        return self.__p_rec_max
+
+    def __set_p_rec_max(self, x: float) -> None:
+        self.__p_rec_max = x
+
+    p_rec_max = property(__get_p_rec_max, __set_p_rec_max)
+
+    def __get_p_harvest_straight(self) -> float:
+        return self.__p_harvest_straight
+
+    def __set_p_harvest_straight(self, x: float) -> None:
+        self.__p_harvest_straight = x
+
+    p_harvest_straight = property(__get_p_harvest_straight, __set_p_harvest_straight)
+
     def __get_es_max(self) -> float:
         return self.__es_max
 
@@ -309,8 +335,14 @@ class Lap(object):
         self.e_cons_cl = np.zeros(self.trackobj.no_points_cl)
         self.tire_loads = np.zeros((self.trackobj.no_points, 4))
 
-        self.e_rec_e_motor_max = self.driverobj.carobj.pars_engine.get(
-            "e_rec_e_motor_max", np.inf
+        _vehicle_rec_max = self.driverobj.carobj.pars_engine.get("e_rec_e_motor_max", np.inf)
+        _track_rec_max = self.trackobj.pars_track.get("e_rec_max", 8e6)
+        self.e_rec_e_motor_max = min(_vehicle_rec_max, _track_rec_max)
+        _vehicle_p_rec = self.driverobj.carobj.pars_engine.get("pow_e_motor", 350e3)
+        _track_p_rec = self.trackobj.pars_track.get("p_rec_max", 350e3)
+        self.p_rec_max = min(_vehicle_p_rec, _track_p_rec)
+        self.p_harvest_straight = self.driverobj.carobj.pars_engine.get(
+            "p_harvest_straight", self.p_rec_max
         )
         self.es_max = self.driverobj.carobj.pars_engine.get(
             "max_e_energy_storage", np.inf
@@ -367,23 +399,51 @@ class Lap(object):
         # --------------------------------------------------------------------------------------------------------------
 
         # recalculation only required if EM strategy is not "pure FCFB"
-        if self.driverobj.pars_driver["em_strategy"] in ["LBP", "LS", "ERSO"]:
+        if self.driverobj.pars_driver["em_strategy"] in ["LBP", "LS", "ERSO", "QUALY"]:
             """Due to the mutual influence between velocity profile and EM strategy we need some iterations until an
             equilibrium was found."""
 
             # create required loop variables
             i = 0
             es_prev = 0.0
+            e_rec_prev = 0.0
 
-            while (
-                math.fabs(self.es_cl[-1] - es_prev) > self.pars_solver["es_diff_max"]
-                and i < self.pars_solver["max_no_em_iters"]
-            ):
+            strategy = self.driverobj.pars_driver["em_strategy"]
+            # ERSO and QUALY use total recovery as the convergence signal because they actively control
+            # harvest, so es_cl[-1] doesn't change monotonically between iterations.
+            is_erso_or_qualy = strategy in ("ERSO", "QUALY")
+
+            # ERSO/QUALY plan <-> velocity profile feedback can settle into a short limit cycle
+            # instead of a fixed point. Detect a revisited plan (same deploy/harvest masks as a
+            # recent iteration), stop, and re-apply the best plan seen — every plan's lap time is
+            # measured under its own solved profile, so the minimum is a genuine result.
+            plan_hist = []  # [(boost_mask, harvest_mask), ...] of the last few iterations
+            best_t = np.inf
+            best_plan = None  # (boost_mask, harvest_mask, v_start, a_x_start) for exact replay
+            plan_cycled = False
+
+            def _not_converged():
+                if plan_cycled:
+                    return False
+                if is_erso_or_qualy:
+                    return math.fabs(float(np.sum(self.e_rec_e_motor)) - e_rec_prev) > self.pars_solver["es_diff_max"]
+                return math.fabs(self.es_cl[-1] - es_prev) > self.pars_solver["es_diff_max"]
+
+            while _not_converged() and i < self.pars_solver["max_no_em_iters"]:
                 i += 1
                 es_prev = self.es_cl[-1]
+                e_rec_prev = float(np.sum(self.e_rec_e_motor))
 
                 if self.debug_opts["use_print"]:
                     print("Starting recalculation considering hybrid system (%i)" % i)
+
+                # electric turbocharger recovery of the previous run (charges the ES from the
+                # ICE, not subject to the MGU-K recovery cap) — sustainable deploy income
+                if self.driverobj.pars_driver["use_recuperation"]:
+                    e_rec_etc = (self.driverobj.carobj.pars_engine["eta_etc_re"] * 2.0 * math.pi
+                                 * float(np.sum(self.n_cl[:-1] * self.m_eng * np.diff(self.t_cl))))
+                else:
+                    e_rec_etc = 0.0
 
                 # calculate hybrid system application (boost) based on the previous result
                 self.driverobj.calc_em_boost_use(
@@ -392,16 +452,60 @@ class Lap(object):
                     n_cl=self.n_cl,
                     m_requ=self.m_requ,
                     es_final=self.es_cl[-1],
+                    e_rec_max=self.e_rec_e_motor_max,
+                    p_rec_max=self.p_rec_max,
+                    e_rec_actual=float(np.sum(self.e_rec_e_motor)),
+                    # braking regen only (recovery outside the previous active-harvest mask) —
+                    # exogenous income for the self-consistent ERSO harvest/deploy plan
+                    e_rec_braking=float(np.sum(self.e_rec_e_motor[~self.driverobj.em_harvest_use])),
+                    e_rec_etc=e_rec_etc,
+                    es_initial=self.driverobj.pars_driver["initial_energy"] if strategy == "QUALY" else 0.0,
+                    kappa=self.trackobj.kappa if strategy == "QUALY" else None,
+                    ers_harvest_speed=self.driverobj.carobj.pars_engine.get("ers_harvest_speed_kmh", 250.0) / 3.6
+                                      if strategy == "QUALY" else None,
                 )
 
                 # rerun solver to get new velocity profile
                 if self.pars_solver["find_v_start"]:
-                    self.__fbplus(v_start=self.vel_cl[-1], a_x_start=self.a_x_final)
+                    v_start_used = self.vel_cl[-1]
+                    a_x_start_used = self.a_x_final
                 else:
-                    self.__fbplus(v_start=self.pars_solver["v_start"], a_x_start=0.0)
+                    v_start_used = self.pars_solver["v_start"]
+                    a_x_start_used = 0.0
+
+                self.__fbplus(v_start=v_start_used, a_x_start=a_x_start_used)
 
                 if self.debug_opts["use_print"]:
                     print("Remaining energy in ES: %.0f kJ" % (self.es_cl[-1] / 1000.0))
+
+                if is_erso_or_qualy:
+                    boost_mask = np.copy(self.driverobj.em_boost_use)
+                    harvest_mask = np.copy(self.driverobj.em_harvest_use)
+
+                    if self.t_cl[-1] < best_t:
+                        best_t = float(self.t_cl[-1])
+                        best_plan = (boost_mask, harvest_mask, v_start_used, a_x_start_used)
+
+                    # revisited plan -> period-1 (converged) or short limit cycle; either way,
+                    # further iterations only replay already-seen states
+                    plan_cycled = any(
+                        np.array_equal(boost_mask, b) and np.array_equal(harvest_mask, h)
+                        for b, h in plan_hist
+                    )
+                    plan_hist.append((boost_mask, harvest_mask))
+                    if len(plan_hist) > 3:
+                        plan_hist.pop(0)
+
+            # if the loop ended on a state other than the best visited plan, replay the best
+            # plan with its original solver inputs so all outputs reproduce it exactly
+            if is_erso_or_qualy and best_plan is not None and self.t_cl[-1] > best_t:
+                if self.debug_opts["use_print"]:
+                    print("Re-applying best EM plan (lap time %.3f s)" % best_t)
+
+                boost_mask, harvest_mask, v_start_used, a_x_start_used = best_plan
+                self.driverobj.em_boost_use = boost_mask
+                self.driverobj.em_harvest_use = harvest_mask
+                self.__fbplus(v_start=v_start_used, a_x_start=a_x_start_used)
 
         elif (
             self.driverobj.pars_driver["em_strategy"] == "FCFB"
@@ -419,6 +523,8 @@ class Lap(object):
                 n_cl=self.n_cl,
                 m_requ=self.m_requ,
                 es_final=self.es_cl[-1],
+                e_rec_max=self.e_rec_e_motor_max,
+                p_rec_max=self.p_rec_max,
             )
 
             # rerun solver to get new velocity profile
@@ -630,7 +736,8 @@ class Lap(object):
                     and np.sum(e_rec_e_motor) < self.e_rec_e_motor_max
                     and es_cl[i] < es_max
                 ):
-                    harvest_torque = carobj.torque_e_motor(n=n_cl[i])
+                    harvest_torque = min(carobj.torque_e_motor(n=n_cl[i]),
+                                        self.p_harvest_straight / (2 * math.pi * n_cl[i]))
                     m_e_motor[i] = -harvest_torque
 
                 # calculate available acceleration force at the tire
@@ -652,10 +759,10 @@ class Lap(object):
 
                 # --- Heun's method: lightweight predictor-corrector ---
                 # predictor: Euler step using a_x at start of interval
-                v_pred = math.sqrt(vel_cl[i] * vel_cl[i] + 2 * a_x_start * stepsize)
+                v_pred = math.sqrt(max(0.0, vel_cl[i] * vel_cl[i] + 2 * a_x_start * stepsize))
 
                 # corrector: re-evaluate only aero/rolling resistance at predicted speed
-                # (skip expensive powertrain re-evaluation — use same f_x_powert)
+                # (skip expensive powertrain re-evaluate — use same f_x_powert)
                 if i + 1 < no_points:
                     a_x_end = (
                         f_x_powert
@@ -668,7 +775,7 @@ class Lap(object):
                     a_x = a_x_start
 
                 # calculate velocity in the next point using corrected acceleration
-                vel_cl[i + 1] = math.sqrt(vel_cl[i] * vel_cl[i] + 2 * a_x * stepsize)
+                vel_cl[i + 1] = math.sqrt(max(0.0, vel_cl[i] * vel_cl[i] + 2 * a_x * stepsize))
 
                 # consider velocity limit if reaching it during this step
                 """This if statement is intended to prevent unnecessary backward loops. Therefore it should only come
@@ -981,7 +1088,8 @@ class Lap(object):
                             and np.sum(e_rec_e_motor) < self.e_rec_e_motor_max
                             and es_cl[k] < es_max
                         ):
-                            harvest_torque = carobj.torque_e_motor(n=n_cl[k])
+                            harvest_torque = min(carobj.torque_e_motor(n=n_cl[k]),
+                                                self.p_harvest_straight / (2 * math.pi * n_cl[k]))
                             m_e_motor[k] = -harvest_torque
 
                         # check torques provided and requested
@@ -1053,10 +1161,11 @@ class Lap(object):
                             np.sum(e_rec_e_motor) < self.e_rec_e_motor_max
                             and pars_driver["use_recuperation"]
                         ):
-                            e_rec_e_motor[k] = (
+                            e_rec_e_motor[k] = min(
                                 carobj.pars_engine["eta_e_motor_re"]
                                 * abs(f_x_powert)
-                                * stepsize
+                                * stepsize,
+                                self.p_rec_max * stepsize / vel_cl[k],
                             )
 
                         else:

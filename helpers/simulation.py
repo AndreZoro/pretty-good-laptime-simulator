@@ -97,9 +97,25 @@ def run_drag_simulation(vehicle: str, mu: float = 1.0, dt: float = 0.001,
 
 
 
-def _compute_effective_drs(zone_drs: np.ndarray, acceleration: np.ndarray) -> np.ndarray:
+_AERO_BRAKING_THRESHOLD = -10.0  # m/s²: separates harvesting decel (~0–5) from hard braking (~30–50)
+
+
+def _compute_effective_drs(
+    zone_drs: np.ndarray,
+    acceleration: np.ndarray,
+    kappa: np.ndarray = None,
+    kappa_threshold: float = None,
+) -> np.ndarray:
     """Return boolean array where DRS/active aero was actually open.
-    DRS closes when the driver brakes, so it is only active when in a zone AND not braking (a_x >= 0)."""
+
+    Traditional DRS: closes under braking (a_x < 0).
+    Active aero (2026): closes in corners (|kappa| > threshold) OR under hard braking.
+    A braking threshold of -10 m/s² separates genuine braking from light harvesting deceleration,
+    matching the observed behaviour: aero stays open during mid-straight harvesting and closes
+    when the driver hits the brakes.
+    """
+    if kappa is not None and kappa_threshold is not None:
+        return zone_drs & (np.abs(kappa) <= kappa_threshold) & (acceleration >= _AERO_BRAKING_THRESHOLD)
     return zone_drs & (acceleration >= 0.0)
 
 
@@ -187,6 +203,9 @@ class SimulationResult:
     friction: Optional[np.ndarray] = None  # Track friction coefficient
     e_motor_power: Optional[np.ndarray] = None  # E-motor power [kW], negative = harvest
     harvest_power: Optional[np.ndarray] = None  # Instantaneous harvest power [kW]
+    harvest_energy_profile: Optional[np.ndarray] = None  # Cumulative harvested energy [kJ]
+    sector_distances: Optional[list[float]] = None  # [s12, s23] distances from S/F [m]
+    sector_xy: Optional[list[list[float]]] = None  # [[x,y], [x,y]] track-map positions of sector splits
 
     def format_lap_time(self) -> str:
         """Format lap time as M:SS.mmm"""
@@ -237,6 +256,16 @@ def get_available_vehicles() -> list[str]:
             vehicles.append(f[:-4])  # Strip .ini extension
 
     return sorted(vehicles)
+
+
+def _e_motor_power(lap, no_points: int) -> np.ndarray:
+    """E-motor power in kW: positive = deploy, negative = harvest (both active and braking recuperation)."""
+    dt = np.diff(lap.t_cl[:no_points + 1])
+    power = 2 * np.pi * lap.n_cl[:no_points] * lap.m_e_motor[:no_points] / 1000.0
+    # Braking recuperation: m_e_motor is zeroed but energy still flows into e_rec_e_motor
+    braking_rec = (lap.m_e_motor[:no_points] == 0.0) & (lap.e_rec_e_motor[:no_points] > 0.0)
+    power[braking_rec] = -lap.e_rec_e_motor[:no_points][braking_rec] / dt[braking_rec] / 1000.0
+    return power
 
 
 def run_simulation(
@@ -336,6 +365,15 @@ def run_simulation(
     velocity_unclosed = lap.vel_cl[:no_points]
     distance_unclosed = lap.trackobj.dists_cl[:no_points]
 
+    # Sector split distances (from S/F) and track-map positions
+    idx_s12 = min(int(zone_inds["s12"]), no_points - 1)
+    idx_s23 = min(int(zone_inds["s23"]), no_points - 1)
+    s_dists = [float(lap.trackobj.dists_cl[idx_s12]), float(lap.trackobj.dists_cl[idx_s23])]
+    s_xy = [
+        [float(lap.trackobj.raceline[idx_s12, 0]), float(lap.trackobj.raceline[idx_s12, 1])],
+        [float(lap.trackobj.raceline[idx_s23, 0]), float(lap.trackobj.raceline[idx_s23, 1])],
+    ]
+
     # Compute accelerations
     curvature = lap.trackobj.kappa
     acceleration, lat_acceleration = _compute_accelerations(
@@ -349,6 +387,8 @@ def run_simulation(
     return SimulationResult(
         lap_time=lap.t_cl[-1],
         sector_times=[t_s1, t_s2, t_s3],
+        sector_distances=s_dists,
+        sector_xy=s_xy,
         distance=distance_unclosed,
         velocity=velocity_unclosed,
         velocity_kmh=velocity_unclosed * 3.6,
@@ -370,11 +410,16 @@ def run_simulation(
         energy_storage=lap.es_cl[:no_points] / 1000.0,
         fuel_consumed_profile=lap.fuel_cons_cl[:no_points],
         energy_consumed_profile=lap.e_cons_cl[:no_points] / 1000.0,
-        drs=_compute_effective_drs(lap.trackobj.drs[:no_points], acceleration),
+        drs=_compute_effective_drs(
+            lap.trackobj.drs[:no_points], acceleration,
+            kappa=curvature,
+            kappa_threshold=lap.driverobj.carobj.pars_general.get("active_aero_kappa_threshold"),
+        ),
         time=lap.t_cl[:no_points],
         friction=lap.trackobj.mu[:no_points],
-        e_motor_power=2 * np.pi * lap.n_cl[:no_points] * lap.m_e_motor[:no_points] / 1000.0,
+        e_motor_power=_e_motor_power(lap, no_points),
         harvest_power=lap.e_rec_e_motor[:no_points] / np.diff(lap.t_cl[:no_points + 1]) / 1000.0,
+        harvest_energy_profile=np.cumsum(lap.e_rec_e_motor[:no_points]) / 1000.0,
         active_aero="active_aero_dz_f" in lap.driverobj.carobj.pars_general,
     )
 
@@ -439,6 +484,15 @@ def run_simulation_advanced(
     velocity_unclosed = lap.vel_cl[:no_points]
     distance_unclosed = lap.trackobj.dists_cl[:no_points]
 
+    # Sector split distances (from S/F) and track-map positions
+    idx_s12 = min(int(zone_inds["s12"]), no_points - 1)
+    idx_s23 = min(int(zone_inds["s23"]), no_points - 1)
+    s_dists = [float(lap.trackobj.dists_cl[idx_s12]), float(lap.trackobj.dists_cl[idx_s23])]
+    s_xy = [
+        [float(lap.trackobj.raceline[idx_s12, 0]), float(lap.trackobj.raceline[idx_s12, 1])],
+        [float(lap.trackobj.raceline[idx_s23, 0]), float(lap.trackobj.raceline[idx_s23, 1])],
+    ]
+
     # Compute accelerations
     curvature = lap.trackobj.kappa
     acceleration, lat_acceleration = _compute_accelerations(
@@ -452,6 +506,8 @@ def run_simulation_advanced(
     return SimulationResult(
         lap_time=lap.t_cl[-1],
         sector_times=[t_s1, t_s2, t_s3],
+        sector_distances=s_dists,
+        sector_xy=s_xy,
         distance=distance_unclosed,
         velocity=velocity_unclosed,
         velocity_kmh=velocity_unclosed * 3.6,
@@ -473,10 +529,15 @@ def run_simulation_advanced(
         energy_storage=lap.es_cl[:no_points] / 1000.0,
         fuel_consumed_profile=lap.fuel_cons_cl[:no_points],
         energy_consumed_profile=lap.e_cons_cl[:no_points] / 1000.0,
-        drs=_compute_effective_drs(lap.trackobj.drs[:no_points], acceleration),
+        drs=_compute_effective_drs(
+            lap.trackobj.drs[:no_points], acceleration,
+            kappa=curvature,
+            kappa_threshold=lap.driverobj.carobj.pars_general.get("active_aero_kappa_threshold"),
+        ),
         time=lap.t_cl[:no_points],
         friction=lap.trackobj.mu[:no_points],
-        e_motor_power=2 * np.pi * lap.n_cl[:no_points] * lap.m_e_motor[:no_points] / 1000.0,
+        e_motor_power=_e_motor_power(lap, no_points),
         harvest_power=lap.e_rec_e_motor[:no_points] / np.diff(lap.t_cl[:no_points + 1]) / 1000.0,
+        harvest_energy_profile=np.cumsum(lap.e_rec_e_motor[:no_points]) / 1000.0,
         active_aero="active_aero_dz_f" in lap.driverobj.carobj.pars_general,
     )
