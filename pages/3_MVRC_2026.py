@@ -4,10 +4,16 @@ MVRC 2026 Simulation Page
 Simulation page for the MVRC 2026 vehicle with limited parameter adjustments.
 """
 
+import copy
+
 import numpy as np
 import streamlit as st
 
-from helpers.simulation import get_available_tracks, run_simulation_advanced
+from helpers.simulation import (
+    get_available_tracks,
+    read_vehicle_params,
+    run_simulation_advanced,
+)
 from helpers.visualization import render_simulation_plots
 
 st.set_page_config(
@@ -33,22 +39,42 @@ if "saved_runs" not in st.session_state:
 
 MAX_RUNS = 3
 
-# Default values from MVRC_2026.ini
-DEFAULTS = {
-    "c_w_a": 1.56,
-    "c_z_a_f": 2.20,
-    "c_z_a_r": 2.68,
-    "pow_max": 575.0,  # kW
-}
+# Base vehicle configuration read from MVRC_2026.ini
+BASE_VEH_PARS = read_vehicle_params("MVRC_2026")
+
+# Cooling flow -> engine power model (linear interpolation)
+COOLING_FLOW_MIN = 1.15  # [m^3/s]
+COOLING_FLOW_MAX = 2.30  # [m^3/s]
+POW_MAX_AT_MIN_FLOW = 205.0  # [kW]
+POW_MAX_AT_MAX_FLOW = 410.0  # [kW]
+
+
+def cooling_flow_to_power(flow: float) -> float:
+    """Return the maximum engine power [kW] for a given cooling flow [m^3/s]."""
+    frac = (flow - COOLING_FLOW_MIN) / (COOLING_FLOW_MAX - COOLING_FLOW_MIN)
+    return POW_MAX_AT_MIN_FLOW + frac * (POW_MAX_AT_MAX_FLOW - POW_MAX_AT_MIN_FLOW)
+
 
 # Sidebar controls
 st.sidebar.header("Track Selection")
 
-available_tracks = get_available_tracks()
+# Restrict the selection to the 2026 calendar racelines. Other "_2026" files in the
+# raceline folder are intermediate FastF1 extractions that duplicate these.
+TRACK_SUFFIX_2026 = "GrandPrix_2026"
+DEFAULT_TRACK = "BarcelonaGrandPrix_2026"
+
+available_tracks = sorted(
+    t for t in get_available_tracks() if t.endswith(TRACK_SUFFIX_2026)
+)
+if not available_tracks:  # fall back rather than render an empty dropdown
+    available_tracks = get_available_tracks()
+
 track = st.sidebar.selectbox(
     "Track",
     options=available_tracks,
-    index=available_tracks.index("Shanghai") if "Shanghai" in available_tracks else 0,
+    index=available_tracks.index(DEFAULT_TRACK)
+    if DEFAULT_TRACK in available_tracks
+    else 0,
 )
 
 st.sidebar.header("Vehicle Parameters")
@@ -58,7 +84,7 @@ c_w_a = st.sidebar.number_input(
     "Drag (c_w × A) [m²]",
     min_value=0.5,
     max_value=3.0,
-    value=DEFAULTS["c_w_a"],
+    value=BASE_VEH_PARS["general"]["c_w_a"],
     step=0.05,
     format="%.2f",
     help="Drag coefficient times frontal area",
@@ -68,7 +94,7 @@ c_z_a_f = st.sidebar.number_input(
     "Front Downforce (c_z_f × A) [m²]",
     min_value=0.5,
     max_value=5.0,
-    value=DEFAULTS["c_z_a_f"],
+    value=BASE_VEH_PARS["general"]["c_z_a_f"],
     step=0.05,
     format="%.2f",
     help="Front downforce coefficient times reference area",
@@ -78,22 +104,31 @@ c_z_a_r = st.sidebar.number_input(
     "Rear Downforce (c_z_r × A) [m²]",
     min_value=0.5,
     max_value=5.0,
-    value=DEFAULTS["c_z_a_r"],
+    value=BASE_VEH_PARS["general"]["c_z_a_r"],
     step=0.05,
     format="%.2f",
     help="Rear downforce coefficient times reference area",
 )
 
-# Power
-pow_max = st.sidebar.number_input(
-    "Max Power [kW]",
-    min_value=300.0,
-    max_value=800.0,
-    value=DEFAULTS["pow_max"],
-    step=5.0,
-    format="%.0f",
-    help="Maximum engine power",
+# Power via cooling flow
+st.sidebar.header("Cooling")
+
+cooling_flow = st.sidebar.slider(
+    "Cooling Flow [m³/s]",
+    min_value=COOLING_FLOW_MIN,
+    max_value=COOLING_FLOW_MAX,
+    value=COOLING_FLOW_MAX,
+    step=0.05,
+    format="%.2f",
+    help=(
+        f"Cooling air flow rate. Maximum engine power scales linearly from "
+        f"{POW_MAX_AT_MIN_FLOW:.0f} kW at {COOLING_FLOW_MIN:.2f} m³/s to "
+        f"{POW_MAX_AT_MAX_FLOW:.0f} kW at {COOLING_FLOW_MAX:.2f} m³/s."
+    ),
 )
+
+pow_max = cooling_flow_to_power(cooling_flow)
+st.sidebar.metric("Resulting Max Power", f"{pow_max:.0f} kW")
 
 st.sidebar.divider()
 
@@ -102,82 +137,24 @@ run_button = st.sidebar.button(
     "🚀 Run Simulation", type="primary", use_container_width=True
 )
 
-# Build custom vehicle parameters based on MVRC_2026 with user modifications
-custom_vehicle_pars = {
-    "powertrain_type": "hybrid",
-    "general": {
-        "lf": 1.557,
-        "lr": 1.842,
-        "h_cog": 0.300,
-        "sf": 1.618,
-        "sr": 1.536,
-        "m": 872.0,
-        "f_roll": 0.03,
-        "c_w_a": c_w_a,
-        "c_z_a_f": c_z_a_f,
-        "c_z_a_r": c_z_a_r,
-        "g": 9.81,
-        "rho_air": 1.18,
-        "active_aero_drag_reduction": 0.5,
-        "active_aero_dz_f": 0.10,
-        "active_aero_dz_r": 0.30,
-    },
-    "engine": {
-        "topology": "RWD",
-        "pow_max": pow_max * 1e3,  # Convert kW to W
-        "pow_diff": 41e3,
-        "n_begin": 10500.0,
-        "n_max": 11400.0,
-        "n_end": 12200.0,
-        "be_max": 100.0,
-        "pow_e_motor": 350e3,
-        "eta_e_motor": 0.9,
-        "eta_e_motor_re": 0.15,
-        "eta_etc_re": 0.0,
-        "vel_min_e_motor": 0.0,
-        "torque_e_motor_max": 500.0,
-        "ers_speed_limit": True,
-        "max_e_energy_storage": 4.0e6,
-        "e_rec_e_motor_max": 8.5e6,
-        "series": "F1_2026",
-    },
-    "gearbox": {
-        "i_trans": [0.04, 0.070, 0.095, 0.117, 0.143, 0.172, 0.190, 0.206],
-        "n_shift": [
-            10000.0,
-            11800.0,
-            11800.0,
-            11800.0,
-            11800.0,
-            11800.0,
-            11800.0,
-            13000.0,
-        ],
-        "e_i": [1.16, 1.11, 1.09, 1.08, 1.08, 1.08, 1.07, 1.07],
-        "eta_g": 0.96,
-        "diff_lock_ratio": 0.7,
-        "t_shift": 0.025,
-    },
-    "tires": {
-        "f": {
-            "circ_ref": 2.073,
-            "fz_0": 3000.0,
-            "mux": 1.65,
-            "muy": 1.85,
-            "dmux_dfz": -5.0e-5,
-            "dmuy_dfz": -5.0e-5,
-        },
-        "r": {
-            "circ_ref": 2.073,
-            "fz_0": 3000.0,
-            "mux": 1.95,
-            "muy": 2.15,
-            "dmux_dfz": -5.0e-5,
-            "dmuy_dfz": -5.0e-5,
-        },
-        "tire_model_exp": 2.0,
-    },
-}
+# Build vehicle parameters from MVRC_2026.ini with user modifications
+custom_vehicle_pars = copy.deepcopy(BASE_VEH_PARS)
+custom_vehicle_pars["general"]["c_w_a"] = c_w_a
+custom_vehicle_pars["general"]["c_z_a_f"] = c_z_a_f
+custom_vehicle_pars["general"]["c_z_a_r"] = c_z_a_r
+custom_vehicle_pars["engine"]["pow_max"] = pow_max * 1e3  # Convert kW to W
+
+# Scale pow_diff along with pow_max so the ICE power curve keeps its shape.
+# pow_diff sets the curvature of the cubic power curve independently of pow_max,
+# so lowering pow_max on its own drops the whole curve until the low-rev end
+# clips to zero power (below ~215 kW the engine makes no power under ~8600 rpm
+# and the car cannot pull out of 2nd gear).
+_pow_scale = (
+    custom_vehicle_pars["engine"]["pow_max"] / BASE_VEH_PARS["engine"]["pow_max"]
+)
+custom_vehicle_pars["engine"]["pow_diff"] = (
+    BASE_VEH_PARS["engine"]["pow_diff"] * _pow_scale
+)
 
 # Main area
 if run_button:
@@ -209,8 +186,11 @@ if run_button:
         "yellow_s2": False,
         "yellow_s3": False,
         "yellow_throttle": 0.3,
-        "initial_energy": 4.0e6,
-        "em_strategy": "FCFB",
+        "initial_energy": BASE_VEH_PARS["engine"]["max_e_energy_storage"],
+        # QUALY = qualifying strategy: spends the initial energy plus the energy
+        # recovered during the lap where it gains the most time. Lift & coast is
+        # an FCFB-only feature and must stay off here.
+        "em_strategy": "QUALY",
         "use_recuperation": True,
         "use_lift_coast": False,
         "lift_coast_dist": 10.0,
@@ -220,6 +200,8 @@ if run_button:
         try:
             result = run_simulation_advanced(track_opts, solver_opts, driver_opts)
             st.session_state.mvrc_result = result
+            st.session_state.mvrc_cooling_flow = cooling_flow
+            st.session_state.mvrc_pow_max = pow_max
             st.success(f"Simulation completed for {track}")
         except Exception as e:
             st.error(f"Simulation failed: {e}")
@@ -256,7 +238,7 @@ if st.session_state.mvrc_result is not None:
 
     # Additional metrics
     st.divider()
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
         st.metric("Max Speed", f"{np.max(result.velocity_kmh):.1f} km/h")
@@ -264,6 +246,16 @@ if st.session_state.mvrc_result is not None:
         st.metric("Avg Speed", f"{np.mean(result.velocity_kmh):.1f} km/h")
     with col3:
         st.metric("Energy Used", f"{result.energy_consumed:.1f} kJ")
+    with col4:
+        st.metric(
+            "Cooling Flow",
+            f"{st.session_state.get('mvrc_cooling_flow', COOLING_FLOW_MAX):.2f} m³/s",
+        )
+    with col5:
+        st.metric(
+            "Max Power",
+            f"{st.session_state.get('mvrc_pow_max', POW_MAX_AT_MAX_FLOW):.0f} kW",
+        )
 
     # Render profile chart and track map
     render_simulation_plots(result, key_prefix="mvrc_")
@@ -277,21 +269,23 @@ else:
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("""
+        st.markdown(f"""
         ### Vehicle Parameters
 
         - **Drag (c_w × A)** - Aerodynamic drag coefficient times frontal area
         - **Front Downforce** - Front wing downforce coefficient times area
         - **Rear Downforce** - Rear wing downforce coefficient times area
-        - **Max Power** - Maximum engine power output
+        - **Cooling Flow** - Cooling air flow rate; sets the maximum engine power
+          linearly from {POW_MAX_AT_MIN_FLOW:.0f} kW at {COOLING_FLOW_MIN:.2f} m³/s
+          to {POW_MAX_AT_MAX_FLOW:.0f} kW at {COOLING_FLOW_MAX:.2f} m³/s
         """)
 
     with col2:
-        st.markdown("""
+        st.markdown(f"""
         ### MVRC 2026 Specs
 
-        - **Mass**: 872 kg
+        - **Mass**: {BASE_VEH_PARS["general"]["m"]:.0f} kg
         - **Powertrain**: Hybrid (ICE + E-Motor)
-        - **E-Motor Power**: 120 kW
-        - **Gears**: 8-speed
+        - **E-Motor Power**: {BASE_VEH_PARS["engine"]["pow_e_motor"] / 1e3:.0f} kW
+        - **Gears**: {len(BASE_VEH_PARS["gearbox"]["i_trans"])}-speed
         """)

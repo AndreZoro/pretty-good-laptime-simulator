@@ -158,6 +158,13 @@ VEHICLE_DEFAULTS = {
 }
 DEFAULT_VEHICLE = {"initial_energy": 4.0e6, "use_drs": True}
 
+# Energy management strategies in the canonical UI order, shared by every page that
+# offers a strategy picker. Kept in one place so the pages cannot drift apart -- pages
+# handing state to each other (Parameter Identification -> Advanced Simulation) rely on
+# the option lists and defaults matching.
+EM_STRATEGIES = ["FCFB", "LBP", "LS", "ERSO", "QUALY", "NONE"]
+DEFAULT_EM_STRATEGY = "QUALY"
+
 
 @dataclass
 class SimulationResult:

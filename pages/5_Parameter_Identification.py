@@ -25,6 +25,8 @@ from helpers.fastf1_data import (
     load_speed_trace,
 )
 from helpers.simulation import (
+    DEFAULT_EM_STRATEGY,
+    EM_STRATEGIES,
     get_available_tracks,
     get_available_vehicles,
     run_simulation_advanced,
@@ -1049,8 +1051,8 @@ mu_weather = st.sidebar.slider(
 
 em_strategy = st.sidebar.selectbox(
     "Energy Strategy",
-    options=["ERSO", "FCFB", "LBP", "LS", "QUALY", "NONE"],
-    index=0,
+    options=EM_STRATEGIES,
+    index=EM_STRATEGIES.index(DEFAULT_EM_STRATEGY),
     help="ERSO: energy-recuperation strategy optimizer. FCFB: full charge full boost. LBP: lap-based planning. LS: lift-and-coast strategy. QUALY: qualifying (spends Initial Energy + lap recovery optimally). NONE: no strategy.",
 )
 
@@ -1492,6 +1494,8 @@ if run_button:
         "simulated_v_max": _display_v_max,
         "track": track,
         "vehicle": vehicle_base,
+        "em_strategy": em_strategy,
+        "initial_energy_mj": initial_energy_mj,
         "use_trace": use_trace_mode,
         "sim_distance": best_sim_distance,
         "sim_velocity": best_sim_velocity,
@@ -1531,7 +1535,18 @@ if st.session_state.param_id_result is not None:
         st.session_state[f"ov_czaf_{_veh}"] = float(res["c_z_a_f"])
         st.session_state[f"ov_czar_{_veh}"] = float(res["c_z_a_r"])
         st.session_state[f"ov_pow_max_{_veh}"] = float(res["pow_max"]) / 1e3
-        st.success(f"Parameters loaded. Go to Advanced Simulation and select '{_veh}'.")
+        # the override widgets are keyed per vehicle, so the target page must be on the
+        # same vehicle for the values above to be picked up
+        st.session_state["adv_vehicle"] = _veh
+        # carry the energy strategy (and its budget) the result was identified with,
+        # otherwise the replay uses the Advanced page's own defaults
+        if res.get("em_strategy") is not None:
+            st.session_state["adv_em_strategy"] = res["em_strategy"]
+        if res.get("initial_energy_mj") is not None:
+            st.session_state[f"adv_initial_energy_{_veh}"] = float(
+                res["initial_energy_mj"]
+            )
+        st.switch_page("pages/2_Advanced_Simulation.py")
 
     st.divider()
     st.header("Sector Time Comparison")

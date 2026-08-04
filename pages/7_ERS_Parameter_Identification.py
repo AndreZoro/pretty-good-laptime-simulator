@@ -27,6 +27,8 @@ from helpers.fastf1_data import (
     load_speed_trace,
 )
 from helpers.simulation import (
+    DEFAULT_EM_STRATEGY,
+    EM_STRATEGIES,
     get_available_tracks,
     get_available_vehicles,
     run_simulation_advanced,
@@ -610,8 +612,8 @@ mu_weather = st.sidebar.slider(
 
 em_strategy = st.sidebar.selectbox(
     "Energy Strategy",
-    options=["QUALY", "ERSO", "FCFB", "LBP", "LS", "NONE"],
-    index=0,
+    options=EM_STRATEGIES,
+    index=EM_STRATEGIES.index(DEFAULT_EM_STRATEGY),
     help="QUALY is recommended: ERS harvest parameters are only active with QUALY.",
 )
 

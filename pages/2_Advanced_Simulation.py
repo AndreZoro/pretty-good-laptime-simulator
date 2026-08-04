@@ -12,6 +12,8 @@ import numpy as np
 import streamlit as st
 
 from helpers.simulation import (
+    DEFAULT_EM_STRATEGY,
+    EM_STRATEGIES,
     get_available_tracks,
     get_available_vehicles,
     run_simulation_advanced,
@@ -86,10 +88,19 @@ with st.sidebar.expander("Track Processing"):
 st.sidebar.subheader("Vehicle & Solver")
 
 available_vehicles = get_available_vehicles() + ["Custom"]
+# Driven through session state (key) rather than `index` so other pages -- e.g. the
+# "Load in Advanced Simulation" button on Parameter Identification -- can preselect the
+# vehicle their identified values belong to. Without this the page always opened on the
+# default vehicle and the handed-over overrides stayed invisible.
+_default_vehicle = (
+    "F1_2025" if "F1_2025" in available_vehicles else available_vehicles[0]
+)
+if st.session_state.get("adv_vehicle") not in available_vehicles:
+    st.session_state["adv_vehicle"] = _default_vehicle
 vehicle = st.sidebar.selectbox(
     "Vehicle Configuration",
     options=available_vehicles,
-    index=available_vehicles.index("F1_2025") if "F1_2025" in available_vehicles else 0,
+    key="adv_vehicle",
 )
 
 # Read powertrain_type from selected vehicle INI (needed for conditional UI)
@@ -478,22 +489,32 @@ with st.sidebar.expander("Solver Settings"):
 # =============================================================================
 st.sidebar.subheader("Driver & Strategy")
 
+# Session-state driven (see the vehicle selectbox above) so Parameter Identification can
+# hand over the strategy its result was produced with -- the two pages have different
+# defaults, so an ERSO identification would otherwise be replayed here as FCFB.
+if st.session_state.get("adv_em_strategy") not in EM_STRATEGIES:
+    st.session_state["adv_em_strategy"] = DEFAULT_EM_STRATEGY
 em_strategy = st.sidebar.selectbox(
     "Energy Management Strategy",
-    options=["FCFB", "LBP", "LS", "ERSO", "QUALY", "NONE"],
-    index=0,
+    options=EM_STRATEGIES,
+    key="adv_em_strategy",
     help="FCFB=First Come First Boost, LBP=Longest to Breakpoint, LS=Lowest Speed, QUALY=Qualifying (spends Initial Energy + lap recovery optimally)",
 )
 
 from helpers.simulation import DEFAULT_VEHICLE, VEHICLE_DEFAULTS
 
+# keyed per vehicle so switching vehicles still picks up that vehicle's default budget
 default_energy = VEHICLE_DEFAULTS.get(vehicle, DEFAULT_VEHICLE)["initial_energy"]
+_energy_key = f"adv_initial_energy_{vehicle}"
+_stored_energy = st.session_state.get(_energy_key)
+if not isinstance(_stored_energy, (int, float)) or not 0.0 <= _stored_energy <= 6.0:
+    st.session_state[_energy_key] = default_energy / 1e6
 initial_energy_mj = st.sidebar.slider(
     "Initial Energy [MJ]",
     min_value=0.0,
     max_value=6.0,
-    value=default_energy / 1e6,
     step=0.1,
+    key=_energy_key,
 )
 
 with st.sidebar.expander("Driver Behavior"):
