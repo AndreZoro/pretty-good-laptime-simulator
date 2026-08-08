@@ -1,5 +1,6 @@
 import numpy as np
 import math
+import heapq
 from laptimesim.src.car_hybrid import CarHybrid
 from laptimesim.src.car_electric import CarElectric
 from laptimesim.src.track import Track
@@ -136,7 +137,8 @@ class Driver(object):
                           es_final: float, e_rec_max: float = 8e6, p_rec_max: float = 350e3,
                           e_rec_actual: float = None, e_rec_braking: float = None, e_rec_etc: float = 0.0,
                           es_initial: float = 0.0,
-                          kappa: np.ndarray = None, ers_harvest_speed: float = None):
+                          kappa: np.ndarray = None, ers_harvest_speed: float = None,
+                          e_rec_profile: np.ndarray = None):
         if self.pars_driver["em_strategy"] == "LBP":
             self.__strategy_lbp(t_cl=t_cl,
                                 vel_cl=vel_cl,
@@ -174,7 +176,8 @@ class Driver(object):
                                   e_rec_actual=e_rec_actual,
                                   e_rec_etc=e_rec_etc,
                                   kappa=kappa,
-                                  ers_harvest_speed=ers_harvest_speed)
+                                  ers_harvest_speed=ers_harvest_speed,
+                                  e_rec_profile=e_rec_profile)
 
         elif self.pars_driver["em_strategy"] == "FCFB" and self.pars_driver["use_lift_coast"]:
             # set array where throttle is 0.0 when driving in lift and coast condition
@@ -415,10 +418,65 @@ class Driver(object):
         self.em_boost_use[:no_points] = deploy_mask
         self.em_harvest_use[:no_points] = harvest_mask
 
+    @staticmethod
+    def __enforce_es_feasibility(deploy_mask: np.ndarray, deploy_score: np.ndarray,
+                                 e_deploy_step: np.ndarray, e_rec_profile: np.ndarray,
+                                 e_rec_etc: float, dt: np.ndarray,
+                                 es_initial: float, es_max: float) -> np.ndarray:
+        """Drop planned deployments that the energy store cannot actually pay for.
+
+        Simulates the ES forward against the plan. On the first point where the charge would go
+        negative, the cheapest deployments planned so far (lowest tau/v^2 value) are removed
+        until the deficit is covered, then the walk restarts -- returning energy to an earlier
+        point changes everything downstream, and the ES ceiling means the effect is not simply
+        additive. Removing the lowest-value points first preserves the ranking the price
+        threshold established.
+
+        e_rec_profile is the per-point recovery measured in the previous solver run, so like the
+        budget itself this carries one iteration of lag. ETC recovery is spread over the lap in
+        proportion to time, since the strategy has no per-point breakdown of it.
+        """
+        n = deploy_mask.size
+        mask = deploy_mask.copy()
+
+        gain = e_rec_profile.astype(float).copy()
+        if e_rec_etc > 0.0 and float(np.sum(dt)) > 0.0:
+            gain = gain + e_rec_etc * dt / float(np.sum(dt))
+
+        # bounded: every restart removes at least one deployment
+        for _ in range(int(np.count_nonzero(mask)) + 1):
+            es = es_initial
+            heap = []  # (value, index) of deployments encountered so far, cheapest first
+            deficit_at = -1
+            for i in range(n):
+                if mask[i]:
+                    heapq.heappush(heap, (deploy_score[i], i))
+                    es -= e_deploy_step[i]
+                es += gain[i]
+                if es > es_max:
+                    es = es_max
+                if es < 0.0:
+                    deficit_at = i
+                    break
+
+            if deficit_at < 0:
+                return mask
+            if not heap:
+                return mask  # deficit is not caused by deployment; nothing to give back
+
+            returned = 0.0
+            need = -es
+            while heap and returned < need:
+                _, j = heapq.heappop(heap)
+                mask[j] = False
+                returned += e_deploy_step[j]
+
+        return mask
+
     def __strategy_qualy(self, t_cl: np.ndarray, vel_cl: np.ndarray, n_cl: np.ndarray, m_requ: np.ndarray,
                          es_initial: float, e_rec_max: float = 8e6, p_rec_max: float = 350e3,
                          e_rec_actual: float = None, e_rec_etc: float = 0.0, kappa: np.ndarray = None,
-                         ers_harvest_speed: float = None):
+                         ers_harvest_speed: float = None, e_rec_profile: np.ndarray = None):
         """qualy = Qualifying lap strategy. Jointly optimizes harvest and deployment for a single lap
         where the car starts with a known battery charge (es_initial) and may end with any state
         in [0, es_max]. Budget = es_initial + energy recovered this lap.
@@ -444,10 +502,16 @@ class Driver(object):
 
         # curvature gate: deploy/harvest only on low-curvature sections (straights and gentle bends)
         kappa_max = self.pars_driver.get("kappa_max_deploy", 0.01)  # [1/m] default ≈ 100 m radius
+        # harvesting tolerates far more curvature than deployment: the generator load is carried
+        # by spare ICE torque or by drag, neither of which needs the grip that deployment does,
+        # and long medium-speed corners are exactly where the ICE has headroom to spare
+        kappa_max_harv = self.pars_driver.get("kappa_max_harvest", 0.03)  # ≈ 33 m radius
         if kappa is not None:
             is_low_curv = np.abs(kappa[:no_points]) < kappa_max
+            is_low_curv_harv = np.abs(kappa[:no_points]) < kappa_max_harv
         else:
             is_low_curv = np.ones(no_points, dtype=bool)
+            is_low_curv_harv = np.ones(no_points, dtype=bool)
 
         # throttle gate: deploy/harvest only at full throttle (filters yellow-flag zones)
         is_full_throttle = self.throttle_pos[:no_points] >= 0.95
@@ -526,6 +590,26 @@ class Driver(object):
         T_final = hi
         deploy_mask = deploy_score >= T_final
 
+        # Temporal feasibility: the bisection above only guarantees that TOTAL planned spending
+        # fits the budget. The ES is a buffer bounded by [0, es_max], so a plan can respect the
+        # total and still call for deployment at points where the charge has not been recovered
+        # yet. The solver then silently skips those points, leaving the plan mis-priced (it
+        # believes it bought time it never got). Walk the ES forward against the plan and drop
+        # the least valuable deployments until the trace stays non-negative.
+        # Off by default: it makes the ES trace far more plausible but costs a little lap time
+        # on balance and does not resolve the worst case (Albert Park), so it stays opt-in until
+        # the lag in e_rec_profile is dealt with. See notes above.
+        if self.pars_driver.get("use_es_feasibility", False) and e_rec_profile is not None:
+            deploy_mask = self.__enforce_es_feasibility(
+                deploy_mask=deploy_mask,
+                deploy_score=deploy_score,
+                e_deploy_step=e_deploy_step,
+                e_rec_profile=np.asarray(e_rec_profile[:no_points]),
+                e_rec_etc=e_rec_etc,
+                dt=dt,
+                es_initial=min(es_initial, es_max),
+                es_max=es_max)
+
         # Harvest latch:
         #   START  — speed >= threshold, full throttle, low curvature, profitable (see below;
         #            no is_acc gate here: gentle deceleration from aero + generator drag is
@@ -543,13 +627,13 @@ class Driver(object):
         # profitable too.
         eta_re = self.carobj.pars_engine.get("eta_e_motor_re", 0.0)
         econ_ok = tau / vel_u ** 2 <= eta_re * T_final
-        harvest_trigger = is_full_throttle & is_low_curv & econ_ok \
+        harvest_trigger = is_full_throttle & is_low_curv_harv & econ_ok \
             & (vel_cl[:no_points] >= harvest_speed_min)
 
         harvest_mask = np.zeros(no_points, dtype=bool)
         in_harvest = False
         for i in range(no_points):
-            if is_braking[i] or deploy_mask[i] or not is_low_curv[i]:
+            if is_braking[i] or deploy_mask[i] or not is_low_curv_harv[i]:
                 in_harvest = False
             elif harvest_trigger[i]:
                 in_harvest = True

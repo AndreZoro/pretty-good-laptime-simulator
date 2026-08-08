@@ -46,22 +46,35 @@ st.sidebar.header("Simulation Parameters")
 st.sidebar.subheader("Track Options")
 
 available_tracks = get_available_tracks()
+# Session-state driven so Parameter Identification can preselect the track its values were
+# identified on. Passing both `index` and `key` makes Streamlit warn and take the session
+# value anyway, so the default is applied explicitly instead.
+_default_track = "Spa" if "Spa" in available_tracks else available_tracks[0]
+if st.session_state.get("adv_track") not in available_tracks:
+    st.session_state["adv_track"] = _default_track
 track_name = st.sidebar.selectbox(
     "Track",
     options=available_tracks,
-    index=available_tracks.index("Spa") if "Spa" in available_tracks else 0,
     key="adv_track",
 )
 
 flip_track = st.sidebar.checkbox("Flip Track Direction", value=False)
 
+# Session-state driven so Parameter Identification can hand over the grip level its
+# values were fitted at. Range matches that page's slider (0.6-1.4) so a handed-over
+# value is always representable.
+if not isinstance(st.session_state.get("adv_mu_weather"), (int, float)) or not (
+    0.6 <= st.session_state["adv_mu_weather"] <= 1.4
+):
+    st.session_state["adv_mu_weather"] = 1.0
 mu_weather = st.sidebar.slider(
     "Grip Level (μ)",
-    min_value=0.5,
-    max_value=1.3,
-    value=1.0,
+    min_value=0.6,
+    max_value=1.4,
     step=0.05,
-    help="1.0 = Dry, 0.6 = Wet, >1.0 = High grip surface",
+    key="adv_mu_weather",
+    help="1.0 = Dry, 0.6 = Wet, >1.0 = High grip surface. Multiplied by the track's "
+         "mu_mean; the product is clipped to 1.3.",
 )
 
 with st.sidebar.expander("Track Processing"):
@@ -69,7 +82,7 @@ with st.sidebar.expander("Track Processing"):
         "Interpolation Step Size [m]",
         min_value=1.0,
         max_value=20.0,
-        value=5.0,
+        value=1.0,
         step=1.0,
     )
     curv_filt_width = st.slider(
@@ -85,6 +98,28 @@ with st.sidebar.expander("Track Processing"):
 # =============================================================================
 # SOLVER OPTIONS
 # =============================================================================
+
+# Warn when the track's own friction and the grip multiplier combine past the limit that
+# Track applies (it clips to 1.3 and only print()s, which never reaches the UI).
+try:
+    import ast as _ast
+    import configparser as _cp
+    _tp_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "laptimesim", "input", "tracks", "track_pars.ini")
+    _cfg = _cp.ConfigParser()
+    _cfg.read(_tp_path)
+    _mu_mean = _ast.literal_eval(_cfg.get("TRACK_PARS", "track_pars"))[
+        track_name]["mu_mean"]
+    _mu_eff = _mu_mean * mu_weather
+    if _mu_eff > 1.3:
+        st.sidebar.warning(
+            f"Grip {_mu_mean:.2f} (track) x {mu_weather:.2f} (slider) = {_mu_eff:.3f}, "
+            f"clipped to 1.30. The simulation is not using the value you set."
+        )
+except Exception:
+    pass
+
 st.sidebar.subheader("Vehicle & Solver")
 
 available_vehicles = get_available_vehicles() + ["Custom"]

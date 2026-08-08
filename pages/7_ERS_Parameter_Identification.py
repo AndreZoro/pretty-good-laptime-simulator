@@ -19,6 +19,9 @@ from plotly.subplots import make_subplots
 from scipy.optimize import Bounds, minimize
 
 from helpers.fastf1_data import (
+    compute_trace_r2,
+    DEFAULT_TRACE_METRIC,
+    TRACE_METRICS,
     TRACK_NAME_MAP,
     compute_trace_error,
     get_available_gps,
@@ -34,6 +37,20 @@ from helpers.simulation import (
     run_simulation_advanced,
 )
 from helpers.visualization import render_simulation_plots
+
+# The parameter search runs hundreds of simulations, so it uses a coarser track resolution
+# than the final result. The final simulation behind the plots is re-run at
+# FINAL_PLOT_STEPSIZE: at 5 m the velocity profile visibly saw-tooths through long constant
+# radius corners (the car accelerates over a step, overshoots the cornering limit and is
+# clipped back), and the ripple amplitude scales with the step size.
+# Metric used to compare the simulated speed trace with the FastF1 reference.
+# Set from the sidebar before a search starts; the objective functions read it at
+# call time, so it does not need threading through every optimiser signature.
+TRACE_METRIC = DEFAULT_TRACE_METRIC
+
+SEARCH_STEPSIZE_DEFAULT = 2.5  # [m] resolution used during the parameter search
+FINAL_PLOT_STEPSIZE = 1.0      # [m] resolution of the final simulation used for the plots
+
 
 st.set_page_config(
     page_title="ERS Parameter Identification - Laptime Sim",
@@ -118,7 +135,7 @@ def run_sim_with_params(
     mu_weather: float = 1.0,
     em_strategy: str = "QUALY",
     driver_kwargs: dict = None,
-    interp_stepsize: float = 5.0,
+    interp_stepsize: float = 1.0,
     curv_filt: float = 10.0,
 ):
     vehicle_pars = build_vehicle_pars(
@@ -172,7 +189,7 @@ def run_sim_with_params(
 
 def _log_line(params, lap_time, v_max, error, count, elapsed, use_trace):
     c_w_a, c_z_a, mass, pow_max, p_harv, spd = params
-    err_label = f"RMSE={error:.2f}m/s" if use_trace else f"err={error:.2f}"
+    err_label = (f"relerr={error * 100:.3f}%" if TRACE_METRIC == "time_rel" else f"RMSE={error:.2f}m/s") if use_trace else f"err={error:.2f}"
     return (
         f"[{count}] drag={c_w_a:.2f}, df={c_z_a:.2f}, m={mass:.0f}, "
         f"P={pow_max / 1e3:.0f}kW, Pharv={p_harv / 1e3:.0f}kW, "
@@ -214,7 +231,8 @@ def _make_objective(
             return 1e6
 
         if use_trace:
-            error = compute_trace_error(sim_dist, sim_vel, ref_distance, ref_velocity)
+            error = compute_trace_error(sim_dist, sim_vel, ref_distance, ref_velocity,
+                                        metric=TRACE_METRIC)
         else:
             sector_error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
             v_max_error = v_max_weight * (v_max - target_v_max) ** 2
@@ -224,7 +242,7 @@ def _make_objective(
             _log_line(list(params), lap_time, v_max, error, count_ref[0], elapsed, use_trace)
         )
 
-        if error < best_result[4] - 0.001:
+        if error < best_result[4] - (1e-5 if (use_trace and TRACE_METRIC != "rmse") else 0.001):
             best_result[0] = list(params)
             best_result[1] = sectors
             best_result[2] = lap_time
@@ -246,7 +264,7 @@ def _make_objective(
 def run_nelder_mead(
     track, base_config, target_sectors, target_v_max, initial_guess, bounds,
     log_container, ref_distance=None, ref_velocity=None, mu_weather=1.0,
-    em_strategy="QUALY", driver_kwargs=None, interp_stepsize=5.0, curv_filt=10.0,
+    em_strategy="QUALY", driver_kwargs=None, interp_stepsize=1.0, curv_filt=10.0,
 ):
     count_ref = [0]
     no_improve_ref = [0]
@@ -283,7 +301,7 @@ def run_nelder_mead(
 def run_trust_constr(
     track, base_config, target_sectors, target_v_max, initial_guess, bounds,
     log_container, ref_distance=None, ref_velocity=None, mu_weather=1.0,
-    em_strategy="QUALY", driver_kwargs=None, interp_stepsize=5.0, curv_filt=10.0,
+    em_strategy="QUALY", driver_kwargs=None, interp_stepsize=1.0, curv_filt=10.0,
 ):
     lower = np.array([b[0] for b in bounds])
     upper = np.array([b[1] for b in bounds])
@@ -320,7 +338,8 @@ def run_trust_constr(
             return 1e6
 
         if use_trace:
-            error = compute_trace_error(sim_dist, sim_vel, ref_distance, ref_velocity)
+            error = compute_trace_error(sim_dist, sim_vel, ref_distance, ref_velocity,
+                                        metric=TRACE_METRIC)
         else:
             error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
             error += 0.13 * (v_max - target_v_max) ** 2
@@ -329,7 +348,7 @@ def run_trust_constr(
             _log_line(list(params), lap_time, v_max, error, count_ref[0], elapsed, use_trace)
         )
 
-        if error < best_result[4] - 0.001:
+        if error < best_result[4] - (1e-5 if (use_trace and TRACE_METRIC != "rmse") else 0.001):
             best_result[0] = list(params)
             best_result[1] = sectors
             best_result[2] = lap_time
@@ -378,7 +397,7 @@ def run_trust_constr(
 def run_lbfgsb(
     track, base_config, target_sectors, target_v_max, initial_guess, bounds,
     log_container, ref_distance=None, ref_velocity=None, mu_weather=1.0,
-    em_strategy="QUALY", driver_kwargs=None, interp_stepsize=5.0, curv_filt=10.0,
+    em_strategy="QUALY", driver_kwargs=None, interp_stepsize=1.0, curv_filt=10.0,
 ):
     lower = np.array([b[0] for b in bounds])
     upper = np.array([b[1] for b in bounds])
@@ -415,7 +434,8 @@ def run_lbfgsb(
             return 1e6
 
         if use_trace:
-            error = compute_trace_error(sim_dist, sim_vel, ref_distance, ref_velocity)
+            error = compute_trace_error(sim_dist, sim_vel, ref_distance, ref_velocity,
+                                        metric=TRACE_METRIC)
         else:
             error = sum((s - t) ** 2 for s, t in zip(sectors, target_sectors))
             error += 0.13 * (v_max - target_v_max) ** 2
@@ -424,7 +444,7 @@ def run_lbfgsb(
             _log_line(list(params), lap_time, v_max, error, count_ref[0], elapsed, use_trace)
         )
 
-        if error < best_result[4] - 0.001:
+        if error < best_result[4] - (1e-5 if (use_trace and TRACE_METRIC != "rmse") else 0.001):
             best_result[0] = list(params)
             best_result[1] = sectors
             best_result[2] = lap_time
@@ -492,7 +512,7 @@ st.sidebar.header("Simulation Settings")
 
 with st.sidebar.expander("Track Processing"):
     interp_stepsize = st.slider(
-        "Interpolation Step Size [m]", min_value=1.0, max_value=20.0, value=5.0, step=1.0
+        "Interpolation Step Size [m]", min_value=1.0, max_value=20.0, value=SEARCH_STEPSIZE_DEFAULT, step=0.5
     )
     curv_filt_width = st.slider(
         "Curvature Filter Width [m]", min_value=0.0, max_value=30.0, value=10.0, step=1.0,
@@ -594,6 +614,25 @@ if target_source == "Manual":
         "V_max [km/h]", min_value=200.0, max_value=400.0, value=320.0, step=1.0,
     )
     target_v_max_ms = target_v_max / 3.6
+
+
+# Objective metric for FastF1 trace mode (ignored when no trace is loaded, in which case
+# the fallback sector-time + v_max cost is used instead).
+_metric_label = st.sidebar.radio(
+    "Trace Objective",
+    options=["RMSE", "Time-weighted relative"],
+    index=0,
+    horizontal=True,
+    help=(
+        "RMSE: absolute speed error in m/s. Because the trace is sampled along distance, "
+        "fast sections contribute both larger errors and more samples, so RMSE is strongly "
+        "straight-line weighted.\n\n"
+        "Time-weighted relative: residuals taken relative to the reference speed and weighted "
+        "by the time spent at each sample, so slow corners carry their fair share. "
+        "Dimensionless -- 0.02 means a typical 2% speed error."
+    ),
+)
+TRACE_METRIC = "rmse" if _metric_label == "RMSE" else "time_rel"
 
 st.sidebar.header("Search Method")
 search_method = st.sidebar.selectbox(
@@ -808,7 +847,7 @@ if run_button:
     )
     final_track_opts = {
         "trackname": track, "flip_track": False, "mu_weather": mu_weather,
-        "interp_stepsize_des": interp_stepsize, "curv_filt_width": curv_filt,
+        "interp_stepsize_des": min(interp_stepsize, FINAL_PLOT_STEPSIZE), "curv_filt_width": curv_filt,
         "use_drs": True, "use_pit": False,
     }
     final_solver_opts = {
@@ -953,7 +992,8 @@ if st.session_state.ers_param_id_result is not None:
 
         sim_vel_interp = np.interp(ref_dist_norm, sim_dist_norm, sim_vel)
         delta_vel = sim_vel_interp - r_vel
-        rmse = compute_trace_error(sim_dist, sim_vel, r_dist, r_vel)
+        rmse = compute_trace_error(sim_dist, sim_vel, r_dist, r_vel, metric="rmse")
+        trace_r2 = compute_trace_r2(sim_dist, sim_vel, r_dist, r_vel)
 
         fig = make_subplots(
             rows=2, cols=1, shared_xaxes=True,
@@ -970,7 +1010,7 @@ if st.session_state.ers_param_id_result is not None:
         fig.update_yaxes(title_text="Delta [km/h]", row=2, col=1)
         fig.update_xaxes(title_text="Distance [km]", row=2, col=1)
         fig.update_layout(
-            title=f"Speed Trace Overlay (RMSE: {rmse:.2f} m/s)",
+            title=f"Speed Trace Overlay (R²: {trace_r2:.4f}, RMSE: {rmse:.2f} m/s)",
             height=500, hovermode="x unified",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         )

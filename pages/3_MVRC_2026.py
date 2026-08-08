@@ -162,7 +162,7 @@ if run_button:
         "trackname": track,
         "flip_track": False,
         "mu_weather": 1.0,
-        "interp_stepsize_des": 5.0,
+        "interp_stepsize_des": 1.0,
         "curv_filt_width": 10.0,
         "use_drs": True,
         "use_pit": False,

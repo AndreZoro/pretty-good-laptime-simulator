@@ -115,10 +115,41 @@ class CarHybrid(Car):
                  + self.z_pow_engine[2] * n_use + self.z_pow_engine[3])
         p_eng[p_eng < 0.0] = 0.0  # assure that no negativ powers appear
 
+        # cap by the fuel energy flow limit; no-op for configs that declare no limit, so
+        # pre-2026 vehicles are unaffected
+        p_eng = np.minimum(p_eng, self.__fuel_power_limit(n_use))
+
         # return scalar if input was scalar
         if scalar_input:
             return p_eng[0]
         return p_eng
+
+    def __fuel_power_limit(self, n_use):
+        """Maximum crankshaft power permitted by the fuel energy flow rules, in W.
+
+        C5.2.3 caps fuel energy flow at fuel_energy_flow_max (3000 MJ/h for 2026).
+        C5.2.4 lowers it below fuel_ef_n_ref rpm to  EF = fuel_ef_slope * N(rpm) + fuel_ef_offset
+        (0.27 * N + 165 for 2026); the two curves meet exactly at 10500 rpm.
+        Fuel energy is converted to crankshaft power with the brake thermal efficiency
+        eta_thermal, chosen per car so the declared pow_max is reachable at the flow limit.
+
+        C5.2.5 (the partial load curve EF <= 9.78 * P + 869) is not enforced separately: it is
+        satisfied for any eta_thermal above ~0.10, since deriving power from fuel flow cannot
+        produce the low-power/high-flow combination that rule exists to prevent.
+
+        Rev input in 1/s. Returns inf when the config declares no limit.
+        """
+        ef_max = self.pars_engine.get("fuel_energy_flow_max")
+        if ef_max is None:
+            return np.inf
+
+        n_rpm = n_use * 60.0
+        ef_low = (self.pars_engine.get("fuel_ef_slope", 0.27) * n_rpm
+                  + self.pars_engine.get("fuel_ef_offset", 165.0))
+        n_ref = self.pars_engine.get("fuel_ef_n_ref", 10500.0)
+        ef = np.where(n_rpm < n_ref, np.minimum(ef_low, ef_max), ef_max)  # [MJ/h]
+
+        return self.pars_engine.get("eta_thermal", 0.48) * ef * 1e6 / 3600.0
 
     def plot_power_engine(self) -> None:
         # plot

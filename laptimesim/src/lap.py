@@ -111,10 +111,9 @@ class Lap(object):
             (trackobj.no_points, 4)
         )  # [N] tire loads [FL, FR, RL, RR]
 
-        # [J/lap] maximum harvestable energy: min of vehicle limit and per-track FIA limit (default 8 MJ)
+        # [J/lap] maximum harvestable energy: min of vehicle limit and per-track FIA limit
         _vehicle_rec_max = self.driverobj.carobj.pars_engine.get("e_rec_e_motor_max", np.inf)
-        _track_rec_max = self.trackobj.pars_track.get("e_rec_max", 8e6)
-        self.e_rec_e_motor_max = min(_vehicle_rec_max, _track_rec_max)
+        self.e_rec_e_motor_max = min(_vehicle_rec_max, self.__track_e_rec_max())
         _vehicle_p_rec = self.driverobj.carobj.pars_engine.get("pow_e_motor", 350e3)
         _track_p_rec = self.trackobj.pars_track.get("p_rec_max", 350e3)
         self.p_rec_max = min(_vehicle_p_rec, _track_p_rec)
@@ -336,8 +335,7 @@ class Lap(object):
         self.tire_loads = np.zeros((self.trackobj.no_points, 4))
 
         _vehicle_rec_max = self.driverobj.carobj.pars_engine.get("e_rec_e_motor_max", np.inf)
-        _track_rec_max = self.trackobj.pars_track.get("e_rec_max", 8e6)
-        self.e_rec_e_motor_max = min(_vehicle_rec_max, _track_rec_max)
+        self.e_rec_e_motor_max = min(_vehicle_rec_max, self.__track_e_rec_max())
         _vehicle_p_rec = self.driverobj.carobj.pars_engine.get("pow_e_motor", 350e3)
         _track_p_rec = self.trackobj.pars_track.get("p_rec_max", 350e3)
         self.p_rec_max = min(_vehicle_p_rec, _track_p_rec)
@@ -347,6 +345,20 @@ class Lap(object):
         self.es_max = self.driverobj.carobj.pars_engine.get(
             "max_e_energy_storage", np.inf
         )
+
+    def __track_e_rec_max(self) -> float:
+        """[J/lap] per-track Recharge limit for the session being simulated (FIA C5.2.10).
+
+        The baseline is 8.5 MJ per lap, but the FIA may reduce it per Competition -- to 7 MJ,
+        and for Qualifying/Sprint Qualifying to no less than 4 MJ. Tracks can therefore carry
+        separate `e_rec_max_qualy` and `e_rec_max_race` values in track_pars.ini; the session
+        is selected with the `session` track option ("qualifying" by default). A plain
+        `e_rec_max` still works as a session-independent value.
+        """
+        pars = self.trackobj.pars_track
+        session = str(pars.get("session", "qualifying")).lower()
+        key = "e_rec_max_qualy" if session.startswith("q") else "e_rec_max_race"
+        return pars.get(key, pars.get("e_rec_max", 8.5e6))
 
     def simulate_lap(self):
         """
@@ -463,6 +475,9 @@ class Lap(object):
                     kappa=self.trackobj.kappa if strategy == "QUALY" else None,
                     ers_harvest_speed=self.driverobj.carobj.pars_engine.get("ers_harvest_speed_kmh", 250.0) / 3.6
                                       if strategy == "QUALY" else None,
+                    # per-point recovery from the previous run, so QUALY can check that its plan
+                    # is payable as the lap unfolds and not just in total
+                    e_rec_profile=self.e_rec_e_motor.copy() if strategy == "QUALY" else None,
                 )
 
                 # rerun solver to get new velocity profile
@@ -623,6 +638,7 @@ class Lap(object):
         em_harvest_use = driverobj.em_harvest_use
         pars_engine_eta_e_motor_re = carobj.pars_engine["eta_e_motor_re"]
         es_max = self.es_max
+        free_harvest = pars_driver.get("use_free_harvest", True)
 
         i = 0
         a_x = a_x_start
@@ -739,6 +755,36 @@ class Lap(object):
                     harvest_torque = min(carobj.torque_e_motor(n=n_cl[i]),
                                         self.p_harvest_straight / (2 * math.pi * n_cl[i]))
                     m_e_motor[i] = -harvest_torque
+
+                # ICE-covered ("free") harvesting: where the car is grip limited the ICE has
+                # spare capability. Driving the MGU-K as a generator with that surplus charges
+                # the battery without costing wheel force, because the extra ICE torque cancels
+                # the generator torque in the sum below. Two effects, in order:
+                #   cover — the ICE picks up an active harvest that is already running, undoing
+                #           its cost in longitudinal force
+                #   extra — whatever headroom is left drives the generator on top, force-neutral
+                # This buys energy with fuel instead of lap time, so unlike active harvesting it
+                # needs no strategy decision and no economic gate.
+                if (
+                    free_harvest
+                    and powertrain_type == "hybrid"
+                    and m_e_motor[i] <= 0.0
+                    and m_eng[i] > 0.0
+                    and pars_driver["use_recuperation"]
+                    and np.sum(e_rec_e_motor) < self.e_rec_e_motor_max
+                    and es_cl[i] < es_max
+                ):
+                    spare = carobj.torque(n=n_cl[i]) - m_eng[i]
+                    if spare > 0.0:
+                        gen_cap = min(carobj.torque_e_motor(n=n_cl[i]),
+                                      self.p_harvest_straight / (2 * math.pi * n_cl[i]))
+                        h = -m_e_motor[i]
+                        cover = min(spare, h)
+                        m_eng[i] += cover
+                        extra = min(spare - cover, gen_cap - h)
+                        if extra > 0.0:
+                            m_eng[i] += extra
+                            m_e_motor[i] -= extra
 
                 # calculate available acceleration force at the tire
                 f_x_powert = (
@@ -1091,6 +1137,30 @@ class Lap(object):
                             harvest_torque = min(carobj.torque_e_motor(n=n_cl[k]),
                                                 self.p_harvest_straight / (2 * math.pi * n_cl[k]))
                             m_e_motor[k] = -harvest_torque
+
+                        # ICE-covered ("free") harvesting — same rule as the forward sweep, so
+                        # the two passes agree on the energy balance (velocity is already fixed
+                        # here, this is accounting only)
+                        if (
+                            free_harvest
+                            and powertrain_type == "hybrid"
+                            and m_e_motor[k] <= 0.0
+                            and m_eng[k] > 0.0
+                            and pars_driver["use_recuperation"]
+                            and np.sum(e_rec_e_motor) < self.e_rec_e_motor_max
+                            and es_cl[k] < es_max
+                        ):
+                            spare = carobj.torque(n=n_cl[k]) - m_eng[k]
+                            if spare > 0.0:
+                                gen_cap = min(carobj.torque_e_motor(n=n_cl[k]),
+                                              self.p_harvest_straight / (2 * math.pi * n_cl[k]))
+                                h = -m_e_motor[k]
+                                cover = min(spare, h)
+                                m_eng[k] += cover
+                                extra = min(spare - cover, gen_cap - h)
+                                if extra > 0.0:
+                                    m_eng[k] += extra
+                                    m_e_motor[k] -= extra
 
                         # check torques provided and requested
                         if m_e_motor[k] >= 0.0 and not math.isclose(
