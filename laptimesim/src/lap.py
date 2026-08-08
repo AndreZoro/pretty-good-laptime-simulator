@@ -3,6 +3,7 @@ import math
 import matplotlib.pyplot as plt
 import numpy as np
 
+from laptimesim.src.car import active_aero_kappa_threshold
 from laptimesim.src.driver import Driver
 from laptimesim.src.track import Track
 
@@ -621,9 +622,7 @@ class Lap(object):
         drs = self.trackobj.drs
         # active aero allowed: DRS zone AND curvature below threshold (closes in corners and during braking)
         # braking is handled separately — backward sweep always uses active_aero=False
-        aa_kappa_threshold = carobj.pars_general.get(
-            "active_aero_kappa_threshold", float("inf")
-        )
+        aa_kappa_threshold = active_aero_kappa_threshold(carobj.pars_general)
         active_aero = drs & (np.abs(kappa) <= aa_kappa_threshold)
         vel_lim = self.trackobj.vel_lim
         no_points = self.trackobj.no_points

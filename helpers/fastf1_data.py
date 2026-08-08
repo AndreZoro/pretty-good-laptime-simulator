@@ -204,14 +204,27 @@ def get_drivers_in_session(year: int, gp: str, session_type: str = "Q") -> list[
     return sorted(drivers)
 
 
+# Metrics offered as a fit objective.
+#
+# "r2" is deliberately NOT here: for a fixed reference trace SS_tot and N are constants, so
+# 1 - R^2 = (N / SS_tot) * RMSE^2 -- a strictly increasing function of RMSE. It has the same
+# minimum, the same argmin and the same candidate ranking, so selecting it changes nothing.
+# It is still computed for reporting, where being scale-free makes it comparable across
+# circuits in a way RMSE is not.
+TRACE_METRICS = ["rmse", "time_rel"]
+DEFAULT_TRACE_METRIC = "rmse"
+_SUPPORTED_TRACE_METRICS = TRACE_METRICS + ["r2"]
+
+
 def compute_trace_error(
     sim_distance: np.ndarray,
     sim_velocity: np.ndarray,
     ref_distance: np.ndarray,
     ref_velocity: np.ndarray,
+    metric: str = DEFAULT_TRACE_METRIC,
 ) -> float:
     """
-    Compute RMSE between simulated and reference speed traces.
+    Compare a simulated speed trace against a reference one.
 
     Both traces are normalized to 0-1 of track length before interpolation
     to handle slight differences in total track length.
@@ -221,10 +234,27 @@ def compute_trace_error(
         sim_velocity: Simulated velocity array [m/s]
         ref_distance: Reference (FastF1) distance array [m]
         ref_velocity: Reference (FastF1) velocity array [m/s]
+        metric: "rmse"     -> root mean squared speed error in m/s
+                "time_rel" -> time-weighted RMS relative speed error (see below)
+                "r2"       -> 1 - R^2; report-only, equivalent to "rmse" as an objective
 
     Returns:
-        RMSE of speed difference in m/s
+        A quantity to MINIMISE, so every metric can drive the same optimiser.
+
+    "rmse" is an absolute error, so a 5 m/s miss counts the same everywhere. Because the
+    traces are sampled along distance, fast sections also contribute more samples per second
+    of lap time -- together that makes RMSE strongly straight-line weighted.
+
+    "time_rel" changes both of those. Residuals are taken relative to the reference speed, so
+    a given miss costs more where the car is slow, and each sample is weighted by the time the
+    reference car spent in it (ds / v), so slow sections stop being under-represented. The
+    result is dimensionless: 0.02 means a typical relative speed error of 2%.
     """
+    metric = str(metric).lower()
+    if metric not in _SUPPORTED_TRACE_METRICS:
+        raise ValueError(
+            f"unknown trace metric {metric!r}, expected one of {_SUPPORTED_TRACE_METRICS}")
+
     # Normalize both distance arrays to 0-1
     sim_dist_norm = sim_distance / sim_distance[-1]
     ref_dist_norm = ref_distance / ref_distance[-1]
@@ -232,5 +262,34 @@ def compute_trace_error(
     # Interpolate sim velocity onto reference distance grid
     sim_vel_interp = np.interp(ref_dist_norm, sim_dist_norm, sim_velocity)
 
-    # RMSE
-    return float(np.sqrt(np.mean((sim_vel_interp - ref_velocity) ** 2)))
+    if metric == "time_rel":
+        # guard the division: a reference trace can touch very low speeds
+        v_ref = np.maximum(np.asarray(ref_velocity, dtype=float), 1.0)
+        ds = np.abs(np.gradient(np.asarray(ref_distance, dtype=float)))  # [m] per sample
+        w = ds / v_ref                                                   # [s] time per sample
+        w_sum = float(np.sum(w))
+        if w_sum <= 0.0:
+            return float("inf")
+        rel = (sim_vel_interp - ref_velocity) / v_ref
+        return float(np.sqrt(float(np.sum(w * rel ** 2)) / w_sum))
+
+    ss_res = float(np.sum((sim_vel_interp - ref_velocity) ** 2))
+    if metric == "rmse":
+        return float(np.sqrt(ss_res / ref_velocity.size))
+
+    ss_tot = float(np.sum((ref_velocity - np.mean(ref_velocity)) ** 2))
+    if ss_tot <= 0.0:  # constant reference trace, R^2 undefined
+        return float(np.sqrt(ss_res / ref_velocity.size))
+    return ss_res / ss_tot  # == 1 - R^2
+
+
+def compute_trace_r2(
+    sim_distance: np.ndarray,
+    sim_velocity: np.ndarray,
+    ref_distance: np.ndarray,
+    ref_velocity: np.ndarray,
+) -> float:
+    """R^2 of the simulated speed trace against the reference (1.0 = perfect)."""
+    return 1.0 - compute_trace_error(
+        sim_distance, sim_velocity, ref_distance, ref_velocity, metric="r2"
+    )

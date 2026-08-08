@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import main_laptimesim
+from laptimesim.src.car import active_aero_kappa_threshold
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +106,7 @@ def _compute_effective_drs(
     acceleration: np.ndarray,
     kappa: np.ndarray = None,
     kappa_threshold: float = None,
+    is_active_aero: bool = False,
 ) -> np.ndarray:
     """Return boolean array where DRS/active aero was actually open.
 
@@ -113,9 +115,18 @@ def _compute_effective_drs(
     A braking threshold of -10 m/s² separates genuine braking from light harvesting deceleration,
     matching the observed behaviour: aero stays open during mid-straight harvesting and closes
     when the driver hits the brakes.
+
+    The active-aero rule is selected by 'is_active_aero' (the car has an active aero device), not
+    by the presence of 'kappa_threshold' -- that parameter is optional and mirrors the solver, which
+    treats a missing threshold as "no curvature gating" (see lap.py __fbplus). Deriving the rule
+    from the threshold instead made active-aero cars without one fall back to the traditional-DRS
+    rule, closing the device at any deceleration (e.g. mid-straight harvesting).
     """
-    if kappa is not None and kappa_threshold is not None:
-        return zone_drs & (np.abs(kappa) <= kappa_threshold) & (acceleration >= _AERO_BRAKING_THRESHOLD)
+    if is_active_aero:
+        open_flag = zone_drs & (acceleration >= _AERO_BRAKING_THRESHOLD)
+        if kappa is not None and kappa_threshold is not None:
+            open_flag &= np.abs(kappa) <= kappa_threshold
+        return open_flag
     return zone_drs & (acceleration >= 0.0)
 
 
@@ -420,7 +431,8 @@ def run_simulation(
         drs=_compute_effective_drs(
             lap.trackobj.drs[:no_points], acceleration,
             kappa=curvature,
-            kappa_threshold=lap.driverobj.carobj.pars_general.get("active_aero_kappa_threshold"),
+            kappa_threshold=active_aero_kappa_threshold(lap.driverobj.carobj.pars_general),
+            is_active_aero="active_aero_dz_f" in lap.driverobj.carobj.pars_general,
         ),
         time=lap.t_cl[:no_points],
         friction=lap.trackobj.mu[:no_points],
@@ -539,7 +551,8 @@ def run_simulation_advanced(
         drs=_compute_effective_drs(
             lap.trackobj.drs[:no_points], acceleration,
             kappa=curvature,
-            kappa_threshold=lap.driverobj.carobj.pars_general.get("active_aero_kappa_threshold"),
+            kappa_threshold=active_aero_kappa_threshold(lap.driverobj.carobj.pars_general),
+            is_active_aero="active_aero_dz_f" in lap.driverobj.carobj.pars_general,
         ),
         time=lap.t_cl[:no_points],
         friction=lap.trackobj.mu[:no_points],

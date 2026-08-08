@@ -15,6 +15,28 @@ from laptimesim.src._jit_kernels import (
 )
 
 
+# [1/m] curvature above which a 2026-style active aero device closes, applied when a vehicle
+# defines active aero but no explicit 'active_aero_kappa_threshold'. 0.01 1/m -> R = 100 m, i.e.
+# the device stays open on straights and fast kinks and closes for genuine corners.
+DEFAULT_ACTIVE_AERO_KAPPA_THRESHOLD = 0.01
+
+
+def active_aero_kappa_threshold(pars_general: dict) -> float:
+    """Return the curvature threshold above which the active aero device closes.
+
+    Cars without an active aero device (traditional DRS) get infinity, i.e. no curvature gating --
+    their DRS behaviour is unchanged. Active aero cars fall back to
+    DEFAULT_ACTIVE_AERO_KAPPA_THRESHOLD if their .ini does not set the parameter, so a missing
+    entry cannot leave the device open through corners.
+    """
+    if "active_aero_dz_f" not in pars_general and "active_aero_dz_r" not in pars_general:
+        return float("inf")
+
+    return pars_general.get(
+        "active_aero_kappa_threshold", DEFAULT_ACTIVE_AERO_KAPPA_THRESHOLD
+    )
+
+
 def _build_jit_params(pars_general, pars_engine, pars_tires, pars_gearbox):
     """Build the packed 1D float64 parameter array for JIT kernels."""
     params = np.zeros(PARAMS_SIZE, dtype=np.float64)
