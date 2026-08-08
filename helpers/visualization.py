@@ -130,9 +130,13 @@ def get_viz_options(result: SimulationResult) -> dict:
 
 def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> None:
     """
-    Render the profile chart and track map for a simulation result.
-    Hover on the profile moves a cursor on the track map; hover on the
-    track map draws a vertical line on the profile.
+    Render the velocity profile and track map side by side, plus a full-width
+    detail plot below whose variable is picked from a dropdown (the dropdown also
+    drives the track map colouring).
+
+    Hovering any of the three panels marks the same track position on the other
+    two: a cursor dot + pulse ring on the track map, a vertical line on the
+    profiles.
 
     Args:
         result: SimulationResult object containing the data to visualize
@@ -154,7 +158,13 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
     # producing a white flash (Chromium happens to mask it). Never reloading the
     # iframe at all avoids the flash in every browser, not just Chromium.
     viz_options = get_viz_options(result)
-    default_viz = next(iter(viz_options))
+
+    # the top-left profile is always velocity; the dropdown below defaults to the first
+    # option that is not velocity so both plots do not show the same trace
+    fixed_viz = "Velocity" if "Velocity" in viz_options else next(iter(viz_options))
+    default_viz = next(
+        (name for name in viz_options if name != fixed_viz), fixed_viz
+    )
 
     # Downsample to ~10 m resolution for track rendering (geometry is shared by
     # every visualization option)
@@ -203,6 +213,7 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
             "track_x": tx,
             "track_y": ty,
             "dist": dist,
+            "fixed_viz": fixed_viz,
             "default_viz": default_viz,
             "options": options_payload,
             "sector_dists": sector_dists,
@@ -216,9 +227,9 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
 <script>{_get_plotly_js()}</script>
 <style>
   html, body {{ margin:0; padding:0; background:transparent; font-family:"Source Sans Pro",sans-serif; }}
-  #controls {{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }}
+  #controls {{ display:flex; align-items:center; gap:8px; margin:10px 0 4px 0; }}
   #controls label {{ color:#fff; font-size:14px; }}
-  #legend {{ color:#bbb; font-size:13px; margin-top:4px; }}
+  #legend {{ color:#bbb; font-size:13px; margin-left:12px; }}
   #viz-select {{
     background:#262730; color:#fff; border:1px solid #4a4a52; border-radius:6px;
     padding:4px 8px; font-size:14px; font-family:inherit;
@@ -226,6 +237,7 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
   #wrap {{ display:flex; width:100%; gap:6px; }}
   #profile {{ flex:4; min-width:0; }}
   #trackmap {{ flex:2; min-width:0; position:relative; }}
+  #detail {{ width:100%; }}
   @keyframes pulse-ring {{
     0%   {{ transform:scale(0.8); opacity:0.9; }}
     100% {{ transform:scale(2.6); opacity:0;   }}
@@ -238,72 +250,94 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
   }}
 </style>
 </head><body>
-<div id="controls">
-  <label for="viz-select">Display</label>
-  <select id="viz-select">{option_tags}</select>
-</div>
 <div id="wrap">
   <div id="profile"></div>
   <div id="trackmap"></div>
 </div>
-<div id="legend"></div>
+<div id="controls">
+  <label for="viz-select">Display</label>
+  <select id="viz-select">{option_tags}</select>
+  <span id="legend"></span>
+</div>
+<div id="detail"></div>
 <script>
 const D = {payload};
 let currentViz = D.default_viz;
 document.getElementById('viz-select').value = currentViz;
-const O = D.options[currentViz];
+const FIXED = D.options[D.fixed_viz];   // top-left profile, never switched
+const O = D.options[currentViz];        // full-width detail profile + track map colouring
 
-// ── Profile chart ──────────────────────────────────────────────
+// ── Profile charts ─────────────────────────────────────────────
 const sectorLabels = ['S1|S2', 'S2|S3'];
 const sectorColors = ['#f0e040', '#40e0f0'];
-const profileShapes = [{{
-  type: 'line', xref: 'x', yref: 'paper',
-  x0: 0, x1: 0, y0: 0, y1: 1,
-  line: {{color: 'red', width: 1, dash: 'dot'}},
-  visible: false,
-}}];
-const profileAnnotations = [];
-(D.sector_dists || []).forEach(function(d, i) {{
-  profileShapes.push({{
-    type: 'line', xref: 'x', yref: 'paper',
-    x0: d, x1: d, y0: 0, y1: 1,
-    line: {{color: sectorColors[i], width: 1, dash: 'dash'}},
-  }});
-  profileAnnotations.push({{
-    xref: 'x', yref: 'paper',
-    x: d, y: 1,
-    text: sectorLabels[i],
-    showarrow: false,
-    xanchor: 'center', yanchor: 'bottom',
-    font: {{color: sectorColors[i], size: 11}},
-  }});
-}});
 
-Plotly.newPlot('profile', [{{
-  x: D.prof_dist, y: O.prof_data,
-  type: 'scatter', mode: 'lines',
-  fill: 'tozeroy',
-  fillgradient: {{type: 'vertical', colorscale: [[0, 'rgba(31,119,180,0)'], [1, 'rgba(31,119,180,0.45)']]}},
-  line: {{color: '#1f77b4', width: 2}},
-  hovertemplate: '<b>%{{x:.0f}} m</b><br>' + currentViz + ': %{{y:.2f}}' + O.unit_str + '<extra></extra>',
-}}], {{
-  xaxis: {{title: {{text: 'Distance [m]', font: {{color: '#fff'}}}},
-           tickfont: {{color: '#fff'}},
-           showgrid: false, zeroline: false,
-           showspikes: true, spikemode: 'across', spikesnap: 'cursor',
-           spikecolor: '#FF6B00', spikethickness: 1, spikedash: 'solid'}},
-  yaxis: {{title: {{text: O.y_label, font: {{color: '#fff'}}}},
-           tickfont: {{color: '#fff'}},
-           showgrid: true, gridcolor: 'rgba(128,128,128,0.15)', zeroline: false}},
-  hovermode: 'x unified',
-  hoverlabel: {{bgcolor: '#FF6B00', font: {{color: 'white'}}, bordercolor: '#FF6B00'}},
-  height: 400,
-  margin: {{l:60, r:20, t:20, b:50}},
-  paper_bgcolor: 'rgba(0,0,0,0)',
-  plot_bgcolor: 'rgba(0,0,0,0)',
-  shapes: profileShapes,
-  annotations: profileAnnotations,
-}}, {{responsive: true, displayModeBar: false}});
+// shapes[0] is the linked cursor line, driven by hover on one of the other two
+// panels; the remaining shapes are the static sector boundaries. Every plot needs
+// its own array because Plotly takes ownership of the objects it is handed.
+function profileShapes() {{
+  const shapes = [{{
+    type: 'line', xref: 'x', yref: 'paper',
+    x0: 0, x1: 0, y0: 0, y1: 1,
+    line: {{color: 'red', width: 1, dash: 'dot'}},
+    visible: false,
+  }}];
+  (D.sector_dists || []).forEach(function(d, i) {{
+    shapes.push({{
+      type: 'line', xref: 'x', yref: 'paper',
+      x0: d, x1: d, y0: 0, y1: 1,
+      line: {{color: sectorColors[i], width: 1, dash: 'dash'}},
+    }});
+  }});
+  return shapes;
+}}
+
+function sectorAnnotations() {{
+  return (D.sector_dists || []).map(function(d, i) {{
+    return {{
+      xref: 'x', yref: 'paper',
+      x: d, y: 1,
+      text: sectorLabels[i],
+      showarrow: false,
+      xanchor: 'center', yanchor: 'bottom',
+      font: {{color: sectorColors[i], size: 11}},
+    }};
+  }});
+}}
+
+function profileHover(name, o) {{
+  return '<b>%{{x:.0f}} m</b><br>' + name + ': %{{y:.2f}}' + o.unit_str + '<extra></extra>';
+}}
+
+function makeProfile(divId, name, o, height, labelSectors) {{
+  Plotly.newPlot(divId, [{{
+    x: D.prof_dist, y: o.prof_data,
+    type: 'scatter', mode: 'lines',
+    fill: 'tozeroy',
+    fillgradient: {{type: 'vertical', colorscale: [[0, 'rgba(31,119,180,0)'], [1, 'rgba(31,119,180,0.45)']]}},
+    line: {{color: '#1f77b4', width: 2}},
+    hovertemplate: profileHover(name, o),
+  }}], {{
+    xaxis: {{title: {{text: 'Distance [m]', font: {{color: '#fff'}}}},
+             tickfont: {{color: '#fff'}},
+             showgrid: false, zeroline: false,
+             showspikes: true, spikemode: 'across', spikesnap: 'cursor',
+             spikecolor: '#FF6B00', spikethickness: 1, spikedash: 'solid'}},
+    yaxis: {{title: {{text: o.y_label, font: {{color: '#fff'}}}},
+             tickfont: {{color: '#fff'}},
+             showgrid: true, gridcolor: 'rgba(128,128,128,0.15)', zeroline: false}},
+    hovermode: 'x unified',
+    hoverlabel: {{bgcolor: '#FF6B00', font: {{color: 'white'}}, bordercolor: '#FF6B00'}},
+    height: height,
+    margin: {{l:60, r:20, t:20, b:50}},
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    shapes: profileShapes(),
+    annotations: labelSectors ? sectorAnnotations() : [],
+  }}, {{responsive: true, displayModeBar: false}});
+}}
+
+makeProfile('profile', D.fixed_viz, FIXED, 340, true);
+makeProfile('detail', currentViz, O, 300, false);
 
 // ── Track map ──────────────────────────────────────────────────
 function mapHoverFmt(name, unit) {{
@@ -356,7 +390,7 @@ Plotly.newPlot('trackmap', segs, {{
   xaxis: {{visible: false}},
   yaxis: {{visible: false, scaleanchor: 'x', scaleratio: 1}},
   hoverlabel: {{bgcolor: '#FF6B00', font: {{color: 'white'}}, bordercolor: '#FF6B00'}},
-  height: 400,
+  height: 340,
   margin: {{l:10, r:10, t:20, b:10}},
   showlegend: false,
   paper_bgcolor: 'rgba(0,0,0,0)',
@@ -395,29 +429,55 @@ function bisect(arr, val) {{
   return lo;
 }}
 
-// Profile hover → move cursor dot + pulse ring on track map
-document.getElementById('profile').on('plotly_hover', function(ev) {{
-  const idx = bisect(D.dist, ev.points[0].x);
+const PROFILES = ['profile', 'detail'];
+
+function setCursorLine(divId, dist) {{
+  if (dist === null) {{
+    Plotly.relayout(divId, {{'shapes[0].visible': false}});
+  }} else {{
+    Plotly.relayout(divId, {{
+      'shapes[0].x0': dist, 'shapes[0].x1': dist, 'shapes[0].visible': true,
+    }});
+  }}
+}}
+
+function markTrack(dist) {{
+  if (dist === null) {{
+    Plotly.restyle('trackmap', {{x: [[null]], y: [[null]]}}, [cursorIdx]);
+    ring.style.display = 'none';
+    return;
+  }}
+  const idx = bisect(D.dist, dist);
   Plotly.restyle('trackmap', {{x: [[D.track_x[idx]]], y: [[D.track_y[idx]]]}}, [cursorIdx]);
   showPulse(D.track_x[idx], D.track_y[idx]);
-}});
-document.getElementById('profile').on('plotly_unhover', function() {{
-  Plotly.restyle('trackmap', {{x: [[null]], y: [[null]]}}, [cursorIdx]);
-  ring.style.display = 'none';
+}}
+
+// Profile hover → cursor dot + pulse ring on the track map and cursor line on the
+// other profile (the hovered one already shows its own spike)
+PROFILES.forEach(function(id) {{
+  document.getElementById(id).on('plotly_hover', function(ev) {{
+    const dist = ev.points[0].x;
+    markTrack(dist);
+    PROFILES.forEach(function(other) {{
+      if (other !== id) setCursorLine(other, dist);
+    }});
+  }});
+  document.getElementById(id).on('plotly_unhover', function() {{
+    markTrack(null);
+    PROFILES.forEach(function(other) {{
+      if (other !== id) setCursorLine(other, null);
+    }});
+  }});
 }});
 
-// Track map hover → show vertical line on profile
+// Track map hover → cursor line on both profiles
 document.getElementById('trackmap').on('plotly_hover', function(ev) {{
   if (ev.points[0].customdata) {{
-    Plotly.relayout('profile', {{
-      'shapes[0].x0': ev.points[0].customdata[0],
-      'shapes[0].x1': ev.points[0].customdata[0],
-      'shapes[0].visible': true,
-    }});
+    PROFILES.forEach(function(id) {{ setCursorLine(id, ev.points[0].customdata[0]); }});
   }}
 }});
 document.getElementById('trackmap').on('plotly_unhover', function() {{
-  Plotly.relayout('profile', {{'shapes[0].visible': false}});
+  PROFILES.forEach(function(id) {{ setCursorLine(id, null); }});
 }});
 
 // ── Visualization switching (in-place, no iframe reload) ────────
@@ -425,8 +485,8 @@ function applyViz(name) {{
   currentViz = name;
   const o = D.options[name];
 
-  Plotly.update('profile',
-    {{y: [o.prof_data], hovertemplate: ['<b>%{{x:.0f}} m</b><br>' + name + ': %{{y:.2f}}' + o.unit_str + '<extra></extra>']}},
+  Plotly.update('detail',
+    {{y: [o.prof_data], hovertemplate: [profileHover(name, o)]}},
     {{'yaxis.title.text': o.y_label}},
     [0]
   );
@@ -447,8 +507,9 @@ document.getElementById('viz-select').addEventListener('change', function(ev) {{
 </script>
 </body></html>"""
 
-    # 400px charts + ~40px controls row (moved in-iframe from st.selectbox) + ~25px legend
-    components.html(html, height=470)
+    # 340px velocity/track row + ~44px controls row (in-iframe, not an st.selectbox,
+    # so switching never reloads the component) + 300px detail plot
+    components.html(html, height=700)
 
 
 def create_profile_chart(
