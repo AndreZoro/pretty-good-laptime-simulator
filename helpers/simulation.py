@@ -224,6 +224,7 @@ class SimulationResult:
     harvest_energy_profile: Optional[np.ndarray] = None  # Cumulative harvested energy [kJ]
     sector_distances: Optional[list[float]] = None  # [s12, s23] distances from S/F [m]
     sector_xy: Optional[list[list[float]]] = None  # [[x,y], [x,y]] track-map positions of sector splits
+    label: Optional[str] = None  # run description for comparison legends (set when saving a run)
 
     def format_lap_time(self) -> str:
         """Format lap time as M:SS.mmm"""

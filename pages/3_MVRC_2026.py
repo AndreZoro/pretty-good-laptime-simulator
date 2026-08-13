@@ -9,6 +9,13 @@ import copy
 import numpy as np
 import streamlit as st
 
+from helpers.comparison import (
+    MAX_RUNS,
+    render_comparison,
+    render_saved_runs_manager,
+    save_run_button,
+    saved_runs,
+)
 from helpers.simulation import (
     get_available_tracks,
     read_vehicle_params,
@@ -34,10 +41,7 @@ st.caption("Laptime Simulator for the MVRC 2026 Season")
 # Initialize session state
 if "mvrc_result" not in st.session_state:
     st.session_state.mvrc_result = None
-if "saved_runs" not in st.session_state:
-    st.session_state.saved_runs = []
-
-MAX_RUNS = 3
+saved_runs()  # creates st.session_state.saved_runs on first use
 
 # Base vehicle configuration read from MVRC_2026.ini
 BASE_VEH_PARS = read_vehicle_params("MVRC_2026")
@@ -137,6 +141,11 @@ run_button = st.sidebar.button(
     "🚀 Run Simulation", type="primary", use_container_width=True
 )
 
+st.sidebar.divider()
+
+# Saved runs for the comparison tab (shared store with the Comparison page)
+render_saved_runs_manager(key_prefix="mvrc_")
+
 # Build vehicle parameters from MVRC_2026.ini with user modifications
 custom_vehicle_pars = copy.deepcopy(BASE_VEH_PARS)
 custom_vehicle_pars["general"]["c_w_a"] = c_w_a
@@ -199,6 +208,13 @@ if run_button:
     with st.spinner(f"Simulating MVRC 2026 at {track}..."):
         try:
             result = run_simulation_advanced(track_opts, solver_opts, driver_opts)
+            # Describe the run by the parameters that produced it: every MVRC run uses the
+            # same vehicle file, so vehicle/weather metadata cannot tell two runs apart in
+            # the comparison legend. Built here because the widget values on a later rerun
+            # no longer belong to this result.
+            result.label = (
+                f"{pow_max:.0f} kW · cwA {c_w_a:.2f} · cz {c_z_a_f:.2f}/{c_z_a_r:.2f}"
+            )
             st.session_state.mvrc_result = result
             st.session_state.mvrc_cooling_flow = cooling_flow
             st.session_state.mvrc_pow_max = pow_max
@@ -211,54 +227,57 @@ if run_button:
 if st.session_state.mvrc_result is not None:
     result = st.session_state.mvrc_result
 
-    # Save to Compare button
-    col_save, col_spacer = st.columns([1, 3])
-    with col_save:
-        if len(st.session_state.saved_runs) >= MAX_RUNS:
-            st.warning(f"Max {MAX_RUNS} runs saved. Clear some in Comparison page.")
-        else:
-            if st.button("💾 Save to Compare", use_container_width=True):
-                st.session_state.saved_runs.append(result)
-                st.success(f"Saved! ({len(st.session_state.saved_runs)}/{MAX_RUNS})")
+    tab_result, tab_compare = st.tabs(
+        ["🏁 Lap Result", f"📊 Comparison ({len(saved_runs())}/{MAX_RUNS})"]
+    )
 
-    st.divider()
+    with tab_result:
+        # Save to Compare button
+        col_save, col_spacer = st.columns([1, 3])
+        with col_save:
+            save_run_button(result, key="mvrc_save")
 
-    # Lap time display
-    st.header("Lap Time")
-    col1, col2, col3, col4 = st.columns(4)
+        st.divider()
 
-    with col1:
-        st.metric("Total", result.format_lap_time())
-    with col2:
-        st.metric("Sector 1", f"{result.sector_times[0]:.3f}s")
-    with col3:
-        st.metric("Sector 2", f"{result.sector_times[1]:.3f}s")
-    with col4:
-        st.metric("Sector 3", f"{result.sector_times[2]:.3f}s")
+        # Lap time display
+        st.header("Lap Time")
+        col1, col2, col3, col4 = st.columns(4)
 
-    # Additional metrics
-    st.divider()
-    col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            st.metric("Total", result.format_lap_time())
+        with col2:
+            st.metric("Sector 1", f"{result.sector_times[0]:.3f}s")
+        with col3:
+            st.metric("Sector 2", f"{result.sector_times[1]:.3f}s")
+        with col4:
+            st.metric("Sector 3", f"{result.sector_times[2]:.3f}s")
 
-    with col1:
-        st.metric("Max Speed", f"{np.max(result.velocity_kmh):.1f} km/h")
-    with col2:
-        st.metric("Avg Speed", f"{np.mean(result.velocity_kmh):.1f} km/h")
-    with col3:
-        st.metric("Energy Used", f"{result.energy_consumed:.1f} kJ")
-    with col4:
-        st.metric(
-            "Cooling Flow",
-            f"{st.session_state.get('mvrc_cooling_flow', COOLING_FLOW_MAX):.2f} m³/s",
-        )
-    with col5:
-        st.metric(
-            "Max Power",
-            f"{st.session_state.get('mvrc_pow_max', POW_MAX_AT_MAX_FLOW):.0f} kW",
-        )
+        # Additional metrics
+        st.divider()
+        col1, col2, col3, col4, col5 = st.columns(5)
 
-    # Render profile chart and track map
-    render_simulation_plots(result, key_prefix="mvrc_")
+        with col1:
+            st.metric("Max Speed", f"{np.max(result.velocity_kmh):.1f} km/h")
+        with col2:
+            st.metric("Avg Speed", f"{np.mean(result.velocity_kmh):.1f} km/h")
+        with col3:
+            st.metric("Energy Used", f"{result.energy_consumed:.1f} kJ")
+        with col4:
+            st.metric(
+                "Cooling Flow",
+                f"{st.session_state.get('mvrc_cooling_flow', COOLING_FLOW_MAX):.2f} m³/s",
+            )
+        with col5:
+            st.metric(
+                "Max Power",
+                f"{st.session_state.get('mvrc_pow_max', POW_MAX_AT_MAX_FLOW):.0f} kW",
+            )
+
+        # Render profile chart and track map
+        render_simulation_plots(result, key_prefix="mvrc_")
+
+    with tab_compare:
+        render_comparison()
 
 else:
     # Initial state - show instructions
