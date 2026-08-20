@@ -6,6 +6,7 @@ in the parameter search optimizer.
 """
 
 import os
+import re
 
 import numpy as np
 
@@ -17,6 +18,7 @@ TRACK_NAME_MAP = {
     "Catalunya": "Spanish Grand Prix",
     "Hockenheim": "German Grand Prix",
     "Melbourne": "Australian Grand Prix",
+    "Melbourne_pre2026": "Australian Grand Prix",
     "MexicoCity": "Mexico City Grand Prix",
     "Miami_2026_fastf1": "Miami Grand Prix",
     "Montreal": "Canadian Grand Prix",
@@ -24,6 +26,7 @@ TRACK_NAME_MAP = {
     "Sakhir": "Bahrain Grand Prix",
     "SaoPaulo": "São Paulo Grand Prix",
     "Shanghai": "Chinese Grand Prix",
+    "Shanghai_pre_2026": "Chinese Grand Prix",
     "Shanghai_2026_fastf1": "Chinese Grand Prix",
     "Shanghai_2026_fastf1_smoothed": "Chinese Grand Prix",
     "Silverstone": "British Grand Prix",
@@ -60,10 +63,99 @@ TRACK_NAME_MAP = {
     "UnitedStatesGrandPrix_2025": "United States Grand Prix",
     # ── 2026 season ───────────────────────────────────────────────────────
     "AustralianGrandPrix_2026": "Australian Grand Prix",
+    "AustrianGrandPrix_2026": "Austrian Grand Prix",
+    # the 2026 raceline is named after the circuit, the event is the Spanish GP
+    "BarcelonaGrandPrix_2026": "Spanish Grand Prix",
+    "BelgianGrandPrix_2026": "Belgian Grand Prix",
+    "BritishGrandPrix_2026": "British Grand Prix",
+    "CanadianGrandPrix_2026": "Canadian Grand Prix",
     "ChineseGrandPrix_2026": "Chinese Grand Prix",
+    "HungarianGrandPrix_2026": "Hungarian Grand Prix",
     "JapaneseGrandPrix_2026": "Japanese Grand Prix",
     "MiamiGrandPrix_2026": "Miami Grand Prix",
+    "MonacoGrandPrix_2026": "Monaco Grand Prix",
 }
+
+# Circuit each Grand Prix is held at, for display only ("Australian Grand Prix" -> Melbourne)
+GP_LOCATIONS = {
+    "Abu Dhabi Grand Prix": "Yas Marina",
+    "Australian Grand Prix": "Melbourne",
+    "Austrian Grand Prix": "Spielberg",
+    "Azerbaijan Grand Prix": "Baku",
+    "Bahrain Grand Prix": "Sakhir",
+    "Belgian Grand Prix": "Spa-Francorchamps",
+    "British Grand Prix": "Silverstone",
+    "Canadian Grand Prix": "Montréal",
+    "Chinese Grand Prix": "Shanghai",
+    "Dutch Grand Prix": "Zandvoort",
+    "Emilia Romagna Grand Prix": "Imola",
+    "German Grand Prix": "Hockenheim",
+    "Hungarian Grand Prix": "Budapest",
+    "Italian Grand Prix": "Monza",
+    "Japanese Grand Prix": "Suzuka",
+    "Las Vegas Grand Prix": "Las Vegas",
+    "Mexico City Grand Prix": "Mexico City",
+    "Miami Grand Prix": "Miami",
+    "Monaco Grand Prix": "Monte Carlo",
+    "Qatar Grand Prix": "Lusail",
+    "Russian Grand Prix": "Sochi",
+    "São Paulo Grand Prix": "Interlagos",
+    "Saudi Arabian Grand Prix": "Jeddah",
+    "Singapore Grand Prix": "Marina Bay",
+    "Spanish Grand Prix": "Barcelona",
+    "United States Grand Prix": "Austin",
+}
+
+# Season used when a sim track name carries no year (e.g. the legacy "Spa" raceline)
+DEFAULT_FASTF1_YEAR = 2026
+
+_YEAR_RE = re.compile(r"(?:^|_)((?:19|20)\d{2})(?:_|$)")
+_CAMEL_RE = re.compile(r"(?<=[a-z])(?=[A-Z])")
+
+
+def gp_location(gp_name: str) -> str | None:
+    """Circuit name for a FastF1 GP name, or None when unknown."""
+    return GP_LOCATIONS.get(gp_name)
+
+
+def get_available_gp_names() -> list[str]:
+    """All FastF1 GP names this module knows about, sorted."""
+    return sorted(set(TRACK_NAME_MAP.values()))
+
+
+def resolve_fastf1_event(sim_track: str) -> tuple[str | None, int | None]:
+    """Return the (gp_name, year) a sim track name refers to.
+
+    "AustralianGrandPrix_2026" -> ("Australian Grand Prix", 2026), so the FastF1 reference
+    lap follows the track picked for the simulation instead of being selected twice.
+
+    The explicit TRACK_NAME_MAP wins. Failing that, a "<SomethingGrandPrix>_<year>" name is
+    split on its camel case, which resolves seasons that were added as racelines but not yet
+    added to the map. Either component is None when it cannot be determined.
+
+    Args:
+        sim_track: sim track name, i.e. a raceline file name without extension
+
+    Returns:
+        (FastF1 GP name or None, season year or None)
+    """
+    year_match = _YEAR_RE.search(sim_track)
+    year = int(year_match.group(1)) if year_match else None
+
+    gp_name = TRACK_NAME_MAP.get(sim_track)
+
+    if gp_name is None:
+        # strip the year and any extraction suffixes ("_fastf1", "_smoothed", ...)
+        base = sim_track.split("_", 1)[0] if year_match else sim_track
+        if base.endswith("GrandPrix"):
+            candidate = _CAMEL_RE.sub(" ", base)
+            # only trust the split when it names a GP that actually exists -- racelines are
+            # sometimes named after the circuit ("BarcelonaGrandPrix_2026" is the Spanish GP),
+            # which would otherwise produce a plausible but non-existent event
+            if candidate in set(TRACK_NAME_MAP.values()):
+                gp_name = candidate
+
+    return gp_name, year
 
 
 def setup_cache():

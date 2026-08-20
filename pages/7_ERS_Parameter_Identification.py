@@ -20,14 +20,17 @@ from scipy.optimize import Bounds, minimize
 
 from helpers.fastf1_data import (
     compute_trace_r2,
+    DEFAULT_FASTF1_YEAR,
     DEFAULT_TRACE_METRIC,
     TRACE_METRICS,
     TRACK_NAME_MAP,
     compute_trace_error,
-    get_available_gps,
+    get_available_gp_names,
     get_available_years,
     get_drivers_in_session,
+    gp_location,
     load_speed_trace,
+    resolve_fastf1_event,
 )
 from helpers.simulation import (
     DEFAULT_EM_STRATEGY,
@@ -531,18 +534,43 @@ ref_distance = None
 ref_velocity = None
 
 if target_source == "FastF1 Telemetry":
-    available_gps = get_available_gps(available_tracks)
-    fastf1_tracks = list(available_gps.keys())
+    # Event and season follow the track selected above ("AustralianGrandPrix_2026" -> the
+    # 2026 Australian GP at Melbourne); the manual pickers are only for the exceptions.
+    gp_auto, year_auto = resolve_fastf1_event(track)
+    ff1_year = year_auto or DEFAULT_FASTF1_YEAR
+    gp_name = gp_auto
 
-    if not fastf1_tracks:
-        st.sidebar.warning("No tracks with FastF1 mapping available.")
-    else:
-        ff1_track = st.sidebar.selectbox(
-            "GP Track", options=fastf1_tracks,
-            index=fastf1_tracks.index(track) if track in fastf1_tracks else 0,
+    if gp_auto is not None:
+        _loc = gp_location(gp_auto)
+        st.sidebar.caption(
+            f"Reference: **{ff1_year} {gp_auto}**" + (f" · {_loc}" if _loc else "")
         )
-        track = ff1_track
-        ff1_year = st.sidebar.selectbox("Year", options=get_available_years(), index=8)
+    else:
+        st.sidebar.warning(
+            f"No FastF1 event known for '{track}'. Pick the event manually below."
+        )
+
+    override = st.sidebar.checkbox(
+        "Pick FastF1 event manually",
+        value=gp_auto is None,
+        help="By default the event and season follow the simulation track selected above.",
+    )
+
+    if override:
+        _years = get_available_years()
+        ff1_year = st.sidebar.selectbox(
+            "Year", options=_years,
+            index=_years.index(ff1_year) if ff1_year in _years else len(_years) - 1,
+        )
+        _gp_names = get_available_gp_names()
+        gp_name = st.sidebar.selectbox(
+            "Grand Prix", options=_gp_names,
+            index=_gp_names.index(gp_auto) if gp_auto in _gp_names else 0,
+        )
+
+    if gp_name is None:
+        st.sidebar.info("Select a Grand Prix to download telemetry.")
+    else:
         ff1_session = st.sidebar.radio("Session", options=["Q", "R"], horizontal=True,
                                         help="Q = Qualifying, R = Race")
         ff1_driver = st.sidebar.text_input("Driver (optional)", value="",
@@ -552,7 +580,6 @@ if target_source == "FastF1 Telemetry":
         download_button = st.sidebar.button("Download Telemetry", type="secondary", width="stretch")
 
         if download_button:
-            gp_name = available_gps[ff1_track]
             with st.spinner(f"Downloading {ff1_year} {gp_name} {ff1_session} telemetry..."):
                 try:
                     ff1_data = load_speed_trace(ff1_year, gp_name, ff1_session, ff1_driver)
@@ -565,7 +592,7 @@ if target_source == "FastF1 Telemetry":
                         "lap_time": lap_time_ff1, "sector_times": sectors_ff1,
                         "v_max": float(np.max(vel)),
                         "year": ff1_year, "gp": gp_name,
-                        "session": ff1_session, "driver": ff1_driver, "track": ff1_track,
+                        "session": ff1_session, "driver": ff1_driver, "track": track,
                         "throttle": ff1_data["throttle"], "brake": ff1_data["brake"],
                         "gear": ff1_data["gear"], "rpm": ff1_data["rpm"],
                         "drs": ff1_data["drs"], "drs_active": ff1_data["drs_active"],
