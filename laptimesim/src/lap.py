@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from laptimesim.src.car import active_aero_kappa_threshold
-from laptimesim.src.driver import Driver
+from laptimesim.src.driver import Driver, ay_max_deploy, ay_max_harvest
 from laptimesim.src.track import Track
 
 
@@ -473,7 +473,9 @@ class Lap(object):
                     e_rec_braking=float(np.sum(self.e_rec_e_motor[~self.driverobj.em_harvest_use])),
                     e_rec_etc=e_rec_etc,
                     es_initial=self.driverobj.pars_driver["initial_energy"] if strategy == "QUALY" else 0.0,
-                    kappa=self.trackobj.kappa if strategy == "QUALY" else None,
+                    # both QUALY and ERSO need the curvature to keep active harvest out of
+                    # corners where the driven tires have no spare grip (see ay_max_harvest)
+                    kappa=self.trackobj.kappa,
                     ers_harvest_speed=self.driverobj.carobj.pars_engine.get("ers_harvest_speed_kmh", 250.0) / 3.6
                                       if strategy == "QUALY" else None,
                     # per-point recovery from the previous run, so QUALY can check that its plan
@@ -638,6 +640,12 @@ class Lap(object):
         pars_engine_eta_e_motor_re = carobj.pars_engine["eta_e_motor_re"]
         es_max = self.es_max
         free_harvest = pars_driver.get("use_free_harvest", True)
+        # ceilings on the lateral acceleration at which active harvest / ERS deployment may be
+        # applied. The strategy masks are planned from the previous iteration's velocities, so
+        # they can ask for either at a point that turns out to be grip limited this time round;
+        # these are the authoritative checks, against the a_y the car actually reaches.
+        ay_max_harv = ay_max_harvest(pars_driver)
+        ay_max_dep = ay_max_deploy(pars_driver)
 
         i = 0
         a_x = a_x_start
@@ -646,6 +654,12 @@ class Lap(object):
             # calculate currently acting lateral acceleration and forces
             a_y = vel_cl[i] * vel_cl[i] * kappa[i]
             f_y_f, f_y_r = carobj.calc_lat_forces(a_y=a_y)
+
+            # deployment is suppressed where the car is loaded up laterally: the extra force
+            # only pushes it past the cornering limit and gets braked off again (see
+            # ay_max_deploy). Evaluated here, against the a_y actually reached this iteration,
+            # because the strategy mask was planned on the previous one.
+            boost_ok = em_boost_use[i] and abs(a_y) <= ay_max_dep
 
             # calculate tire force potentials (using a_x = 0.0 (maximum cornering) to find out if we can stay on track)
             (
@@ -738,13 +752,17 @@ class Lap(object):
                     n=n_cl[i],
                     throttle_pos=throttle_pos[i],
                     es=es_cl[i],
-                    em_boost_use=em_boost_use[i],
+                    em_boost_use=boost_ok,
                     vel=vel_cl[i],
                 )
 
-                # active harvesting: MGU-K as generator at high-speed points
+                # active harvesting: MGU-K as generator at high-speed points. Skipped where the
+                # car is cornering hard — the generator torque goes through the driven axle and
+                # would break the friction ellipse, which the solver would answer with a
+                # grip-limited braking sweep (a far bigger lap time loss than the energy gained).
                 if (
                     em_harvest_use[i]
+                    and abs(a_y) <= ay_max_harv
                     and m_e_motor[i] == 0.0
                     and powertrain_type == "hybrid"
                     and pars_driver["use_recuperation"]
@@ -844,7 +862,7 @@ class Lap(object):
                         n=n_cl[i],
                         throttle_pos=throttle_pos[i],
                         es=es_cl[i],
-                        em_boost_use=em_boost_use[i],
+                        em_boost_use=boost_ok,
                         vel=vel_cl[i],
                     )
 
@@ -1119,7 +1137,10 @@ class Lap(object):
                                 n=n_cl[k],
                                 throttle_pos=throttle_pos[k],
                                 es=es_cl[k],
-                                em_boost_use=em_boost_use[k],
+                                # same lateral-load gate as the forward pass, so the energy
+                                # accounting here matches what was actually deployed
+                                em_boost_use=(em_boost_use[k]
+                                              and abs(vel_cl[k] * vel_cl[k] * kappa[k]) <= ay_max_dep),
                                 vel=vel_cl[k],
                             )
                         )

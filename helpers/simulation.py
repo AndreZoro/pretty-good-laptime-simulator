@@ -139,22 +139,42 @@ def _smooth_array(arr: np.ndarray, window: int = 11) -> np.ndarray:
     return np.convolve(arr, np.ones(window) / window, mode='same')
 
 
-def _compute_accelerations(velocity: np.ndarray, distance: np.ndarray, curvature: np.ndarray):
+def _lat_acceleration(velocity: np.ndarray, curvature: np.ndarray) -> np.ndarray:
+    """Lateral acceleration a_y = v^2 * |kappa| [m/s^2], smoothed to suppress curvature noise."""
+    return _smooth_array(velocity ** 2 * np.abs(curvature))
+
+
+def _long_acceleration_steps(velocity_cl: np.ndarray, time_cl: np.ndarray) -> np.ndarray:
+    """Per-step longitudinal acceleration [m/s^2] of a solved lap.
+
+    Takes the CLOSED velocity/time arrays (no_points + 1) and returns one value per step
+    (no_points), aligned with the raceline and the other unclosed result channels.
+
+    a_i = (v_{i+1} - v_i) / (t_{i+1} - t_i): the mean acceleration actually achieved over the
+    step. Two alternatives are deliberately not used:
+      * a centred derivative (np.gradient) averages the steps either side of each point, so a
+        short event (an ERS switch, a brake application) is smeared over three points and can
+        even report deceleration where the car is in fact accelerating;
+      * the spatial form (v_{i+1}^2 - v_i^2) / (2 ds_i) assumes a is constant across the step,
+        which a gear shift breaks -- its t_shift dead time makes that form overstate a by up to
+        ~9 m/s^2 at every shift point.
+    Using dv/dt also matches how the measured reference laps compute their own ax channel, so
+    simulated and real laps stay comparable.
     """
-    Compute longitudinal and lateral accelerations.
+    return np.diff(velocity_cl) / np.diff(time_cl)
+
+
+def _compute_accelerations(velocity_cl: np.ndarray, time_cl: np.ndarray, curvature: np.ndarray):
+    """
+    Compute longitudinal and lateral accelerations for a solved lap.
+
+    Closed velocity/time arrays (no_points + 1) in, unclosed channels (no_points) out.
 
     Returns:
         Tuple of (longitudinal_acceleration, lateral_acceleration) in m/s²
     """
-    # Longitudinal acceleration: a = v * dv/ds
-    dv_ds = np.gradient(velocity, distance)
-    acceleration = velocity * dv_ds
-
-    # Lateral acceleration: a_lat = v^2 * kappa, with smoothing
-    lat_acceleration_raw = velocity ** 2 * np.abs(curvature)
-    lat_acceleration = _smooth_array(lat_acceleration_raw)
-
-    return acceleration, lat_acceleration
+    return (_long_acceleration_steps(velocity_cl, time_cl),
+            _lat_acceleration(velocity_cl[:-1], curvature))
 
 
 # Vehicle-specific defaults for the simple simulation page
@@ -406,10 +426,10 @@ def run_simulation(
         [float(lap.trackobj.raceline[idx_s23, 0]), float(lap.trackobj.raceline[idx_s23, 1])],
     ]
 
-    # Compute accelerations
+    # Compute accelerations (closed arrays in, unclosed channels out)
     curvature = lap.trackobj.kappa
     acceleration, lat_acceleration = _compute_accelerations(
-        velocity_unclosed, distance_unclosed, curvature
+        lap.vel_cl, lap.t_cl, curvature
     )
 
     # Get gear data
@@ -526,10 +546,10 @@ def run_simulation_advanced(
         [float(lap.trackobj.raceline[idx_s23, 0]), float(lap.trackobj.raceline[idx_s23, 1])],
     ]
 
-    # Compute accelerations
+    # Compute accelerations (closed arrays in, unclosed channels out)
     curvature = lap.trackobj.kappa
     acceleration, lat_acceleration = _compute_accelerations(
-        velocity_unclosed, distance_unclosed, curvature
+        lap.vel_cl, lap.t_cl, curvature
     )
 
     # Get gear data

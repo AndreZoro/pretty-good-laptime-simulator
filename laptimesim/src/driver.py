@@ -5,6 +5,55 @@ from laptimesim.src.car_hybrid import CarHybrid
 from laptimesim.src.car_electric import CarElectric
 from laptimesim.src.track import Track
 
+# [m/s^2] default lateral-acceleration ceiling for active MGU-K harvest. Harvest is negative
+# torque through the driven axle, so it competes for the same tire grip cornering uses. Low
+# curvature alone does not bound that: a 110 m bend is "low curvature" but pulls over 4 g at
+# 250 km/h, where the driven tires have no spare longitudinal capacity left. Asking for harvest
+# there violates the friction ellipse and the solver answers with a grip-limited braking sweep,
+# which shows up as a deploy/harvest limit cycle mid-corner. 3 g keeps harvest on straights and
+# genuinely gentle bends, where the original "low curvature is enough" assumption does hold.
+DEFAULT_AY_MAX_HARVEST = 3.0 * 9.81
+
+
+# [m/s^2] default lateral-acceleration ceiling for ERS deployment. Deploying deep in a fast
+# corner buys speed the car cannot hold: the solver brakes the gain straight back off to stay
+# within the cornering limit, which both wastes the energy and drives a deploy/brake limit cycle.
+# Measured on Barcelona (F1_2026, QUALY), sweeping this ceiling: lap time falls monotonically
+# from 72.837 s (no gate) to 72.225 s at 3 g while ERS sign reversals drop from 37 to 2, then
+# rises again at 2.5 g, where the gate starts suppressing legitimate corner-exit deployment.
+# The optimum lands at the same value as the harvest ceiling rather than above it — deployment
+# turns out to be no more tolerant of lateral load than harvest is.
+DEFAULT_AY_MAX_DEPLOY = 3.0 * 9.81
+
+
+def ay_max_harvest(pars_driver: dict) -> float:
+    """Return the lateral-acceleration ceiling [m/s^2] for active harvest.
+
+    Set 'ay_max_harvest' in the driver parameters to override; np.inf restores the old
+    curvature-only behaviour.
+    """
+    return pars_driver.get("ay_max_harvest", DEFAULT_AY_MAX_HARVEST)
+
+
+def ay_max_deploy(pars_driver: dict) -> float:
+    """Return the lateral-acceleration ceiling [m/s^2] for ERS deployment.
+
+    Set 'ay_max_deploy' in the driver parameters to override; np.inf disables the gate.
+
+    FCFB is exempt by default. The gate's premise is that deployment the car cannot hold is
+    better spent elsewhere in the lap, which presupposes a strategy that allocates a budget:
+    QUALY and ERSO bisect on one and redeploy the savings, so gating makes them faster
+    (Barcelona, F1_2026 QUALY: -1.2 s; Spa/Catalunya/Monza: -0.09 to -0.12 s). FCFB deploys
+    unconditionally and has no allocation step, so the same gate is a pure loss for it
+    (Shanghai: +0.265 s) and would only change what the naive baseline means. FCFB therefore
+    keeps deploying mid-corner, chatter included -- pass 'ay_max_deploy' explicitly to gate it.
+    """
+    if "ay_max_deploy" in pars_driver:
+        return pars_driver["ay_max_deploy"]
+    if pars_driver.get("em_strategy") == "FCFB":
+        return np.inf
+    return DEFAULT_AY_MAX_DEPLOY
+
 
 class Driver(object):
     """
@@ -163,7 +212,8 @@ class Driver(object):
                                  p_rec_max=p_rec_max,
                                  e_rec_actual=e_rec_actual,
                                  e_rec_braking=e_rec_braking,
-                                 e_rec_etc=e_rec_etc)
+                                 e_rec_etc=e_rec_etc,
+                                 kappa=kappa)
 
         elif self.pars_driver["em_strategy"] == "QUALY":
             self.__strategy_qualy(t_cl=t_cl,
@@ -307,7 +357,8 @@ class Driver(object):
 
     def __strategy_erso(self, t_cl: np.ndarray, vel_cl: np.ndarray, n_cl: np.ndarray, m_requ: np.ndarray,
                         es_final: float, e_rec_max: float = 8e6, p_rec_max: float = 350e3,
-                        e_rec_actual: float = None, e_rec_braking: float = None, e_rec_etc: float = 0.0):
+                        e_rec_actual: float = None, e_rec_braking: float = None, e_rec_etc: float = 0.0,
+                        kappa: np.ndarray = None):
         """erso = ERS-optimized, charge-sustaining race strategy. Every point is priced by its
         persistence-weighted per-Joule value tau / v^2 (see __time_to_next_event). A single
         bisection finds the price threshold T at which planned spending equals planned income:
@@ -345,7 +396,12 @@ class Driver(object):
         # The same quantity prices deployment (gain) and active harvest drag (cost).
         vel_u = np.maximum(vel_cl[:no_points], 1.0)
         value = tau / vel_u ** 2
-        deploy_score = np.where(pow_avail > 0.0, value, 0.0)
+        # no deployment where the car is already using up its grip laterally: the added force
+        # cannot be held there and the solver brakes it off again (see DEFAULT_AY_MAX_DEPLOY)
+        deploy_ok = pow_avail > 0.0
+        if kappa is not None:
+            deploy_ok &= (vel_cl[:no_points] ** 2 * np.abs(kappa[:no_points])) <= ay_max_deploy(self.pars_driver)
+        deploy_score = np.where(deploy_ok, value, 0.0)
 
         # precompute actual energy consumed per step if deploying (uses real motor torque model)
         e_deploy_step = np.zeros(no_points)
@@ -361,9 +417,14 @@ class Driver(object):
                                                                             m_e_motor=np.array(m_e_motor_val))
                                     * dt[i])
 
-        # harvest eligibility
+        # harvest eligibility: fast enough to be worth it, and with enough spare grip at the
+        # driven axle to absorb the generator torque (see DEFAULT_AY_MAX_HARVEST — harvesting
+        # mid-corner makes the solver brake instead, which costs far more than the energy earns)
         harvest_speed_min = self.pars_driver.get("ers_harvest_speed_min", 150.0 / 3.6)  # [m/s]
         harvest_eligible = vel_cl[:no_points] >= harvest_speed_min
+        if kappa is not None:
+            ay_pred = vel_cl[:no_points] ** 2 * np.abs(kappa[:no_points])
+            harvest_eligible &= ay_pred <= ay_max_harvest(self.pars_driver)
 
         # planned battery energy per step when actively harvesting (mirrors the solver's
         # harvest model: MGU-K as generator at p_harvest_straight, recovered at eta_e_motor_re)
@@ -506,12 +567,25 @@ class Driver(object):
         # by spare ICE torque or by drag, neither of which needs the grip that deployment does,
         # and long medium-speed corners are exactly where the ICE has headroom to spare
         kappa_max_harv = self.pars_driver.get("kappa_max_harvest", 0.03)  # ≈ 33 m radius
+        # ...but only up to a point: that reasoning holds while the driven tires still have
+        # spare longitudinal capacity, and curvature alone does not say whether they do. A fast
+        # sweeper passes the curvature gate and still pulls several g, so gate harvest on the
+        # lateral acceleration the car actually reaches there (see DEFAULT_AY_MAX_HARVEST).
+        ay_max_harv = ay_max_harvest(self.pars_driver)
+        ay_max_dep = ay_max_deploy(self.pars_driver)
         if kappa is not None:
+            ay_pred = vel_cl[:no_points] ** 2 * np.abs(kappa[:no_points])
             is_low_curv = np.abs(kappa[:no_points]) < kappa_max
-            is_low_curv_harv = np.abs(kappa[:no_points]) < kappa_max_harv
+            # tau below is measured to the next braking point or sharp corner, so it treats a
+            # deployment deep in a fast corner as long-lived. It is not: the solver brakes the
+            # gain off within a few metres to hold the cornering limit. Bound deployment by the
+            # lateral load as well, not curvature alone (see DEFAULT_AY_MAX_DEPLOY).
+            deploy_grip_ok = is_low_curv & (ay_pred <= ay_max_dep)
+            harvest_grip_ok = (np.abs(kappa[:no_points]) < kappa_max_harv) & (ay_pred <= ay_max_harv)
         else:
             is_low_curv = np.ones(no_points, dtype=bool)
-            is_low_curv_harv = np.ones(no_points, dtype=bool)
+            deploy_grip_ok = np.ones(no_points, dtype=bool)
+            harvest_grip_ok = np.ones(no_points, dtype=bool)
 
         # throttle gate: deploy/harvest only at full throttle (filters yellow-flag zones)
         is_full_throttle = self.throttle_pos[:no_points] >= 0.95
@@ -521,7 +595,7 @@ class Driver(object):
         is_acc = vel_diff > 0
 
         # combined deploy eligibility
-        deploy_eligible = is_acc & is_full_throttle & is_low_curv
+        deploy_eligible = is_acc & is_full_throttle & deploy_grip_ok
 
         # available ERS power (zero above the speed limit -> point cannot deploy)
         if has_speed_limit:
@@ -611,12 +685,13 @@ class Driver(object):
                 es_max=es_max)
 
         # Harvest latch:
-        #   START  — speed >= threshold, full throttle, low curvature, profitable (see below;
-        #            no is_acc gate here: gentle deceleration from aero + generator drag is
-        #            expected and intentional)
-        #   CONTINUE — latch holds as long as not braking and not in sharp corner
+        #   START  — speed >= threshold, full throttle, grip available (curvature AND lateral
+        #            acceleration within limits), profitable (see below; no is_acc gate here:
+        #            gentle deceleration from aero + generator drag is expected and intentional)
+        #   CONTINUE — latch holds as long as not braking and grip is still available
         #   STOP   — car hits brakes (vel drop > braking_threshold per 5 m step),
-        #            OR deploy zone resumes (corner exit), OR sharp corner entered.
+        #            OR deploy zone resumes (corner exit), OR the car loads up the tires
+        #            (sharp corner, or lateral acceleration above the harvest ceiling).
         # After braking the braking regen path runs automatically; harvest restarts only
         # when speed exceeds the threshold again on the next straight.
         #
@@ -627,13 +702,13 @@ class Driver(object):
         # profitable too.
         eta_re = self.carobj.pars_engine.get("eta_e_motor_re", 0.0)
         econ_ok = tau / vel_u ** 2 <= eta_re * T_final
-        harvest_trigger = is_full_throttle & is_low_curv_harv & econ_ok \
+        harvest_trigger = is_full_throttle & harvest_grip_ok & econ_ok \
             & (vel_cl[:no_points] >= harvest_speed_min)
 
         harvest_mask = np.zeros(no_points, dtype=bool)
         in_harvest = False
         for i in range(no_points):
-            if is_braking[i] or deploy_mask[i] or not is_low_curv_harv[i]:
+            if is_braking[i] or deploy_mask[i] or not harvest_grip_ok[i]:
                 in_harvest = False
             elif harvest_trigger[i]:
                 in_harvest = True

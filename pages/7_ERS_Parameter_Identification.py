@@ -656,7 +656,7 @@ em_strategy = st.sidebar.selectbox(
 
 default_energy_j = 4.0e6
 initial_energy_mj = st.sidebar.slider(
-    "Initial Energy [MJ]", min_value=0.0, max_value=6.0,
+    "Initial Energy [MJ]", min_value=0.0, max_value=10.0,
     value=default_energy_j / 1e6, step=0.1,
 )
 

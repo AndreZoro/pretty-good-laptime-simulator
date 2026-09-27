@@ -542,12 +542,12 @@ from helpers.simulation import DEFAULT_VEHICLE, VEHICLE_DEFAULTS
 default_energy = VEHICLE_DEFAULTS.get(vehicle, DEFAULT_VEHICLE)["initial_energy"]
 _energy_key = f"adv_initial_energy_{vehicle}"
 _stored_energy = st.session_state.get(_energy_key)
-if not isinstance(_stored_energy, (int, float)) or not 0.0 <= _stored_energy <= 6.0:
+if not isinstance(_stored_energy, (int, float)) or not 0.0 <= _stored_energy <= 10.0:
     st.session_state[_energy_key] = default_energy / 1e6
 initial_energy_mj = st.sidebar.slider(
     "Initial Energy [MJ]",
     min_value=0.0,
-    max_value=6.0,
+    max_value=10.0,
     step=0.1,
     key=_energy_key,
 )

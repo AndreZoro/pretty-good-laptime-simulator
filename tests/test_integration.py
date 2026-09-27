@@ -351,6 +351,138 @@ class TestQualyStrategy:
         assert qualy_lap.t_cl[-1] < fcfb_lap.t_cl[-1]
 
 
+class TestLateralAccelerationGates:
+    """ERS deployment and active harvest are both bounded by the lateral acceleration the car
+    reaches, not by curvature alone.
+
+    Curvature alone does not say how much grip is left: a 110 m bend passes a kappa < 0.01 gate
+    yet pulls over 4 g at 250 km/h, where the driven tires have no spare longitudinal capacity.
+    Asking for torque there (either sign) makes the solver answer with a grip-limited braking
+    sweep, which showed up as a deploy/harvest limit cycle chattering every few metres
+    mid-corner. See ay_max_deploy / ay_max_harvest in laptimesim.src.driver.
+    """
+
+    @staticmethod
+    def _ay(lap):
+        """Lateral acceleration per point, as the solver computes it (unsmoothed)."""
+        return np.abs(np.asarray(lap.vel_cl[:-1]) ** 2 * np.asarray(lap.trackobj.kappa))
+
+    def test_qualy_deploy_respects_ay_gate(self, qualy_lap):
+        from laptimesim.src.driver import ay_max_deploy
+
+        limit = ay_max_deploy(qualy_lap.driverobj.pars_driver)
+        assert np.all(self._ay(qualy_lap)[qualy_lap.driverobj.em_boost_use] <= limit)
+
+    def test_qualy_harvest_respects_ay_gate(self, qualy_lap):
+        from laptimesim.src.driver import ay_max_harvest
+
+        limit = ay_max_harvest(qualy_lap.driverobj.pars_driver)
+        assert np.all(self._ay(qualy_lap)[qualy_lap.driverobj.em_harvest_use] <= limit)
+
+    def test_erso_deploy_respects_ay_gate(self, erso_lap):
+        from laptimesim.src.driver import ay_max_deploy
+
+        limit = ay_max_deploy(erso_lap.driverobj.pars_driver)
+        assert np.all(self._ay(erso_lap)[erso_lap.driverobj.em_boost_use] <= limit)
+
+    def test_erso_harvest_respects_ay_gate(self, erso_lap):
+        from laptimesim.src.driver import ay_max_harvest
+
+        limit = ay_max_harvest(erso_lap.driverobj.pars_driver)
+        assert np.all(self._ay(erso_lap)[erso_lap.driverobj.em_harvest_use] <= limit)
+
+    def test_fcfb_is_exempt_from_deploy_gate(self, fcfb_lap):
+        """FCFB is the deliberately naive deploy-everywhere baseline: it has no allocation step
+        to spend the saved energy elsewhere, so gating it is a pure loss. Its frozen references
+        (tests/test_f1_2026.py, tests/test_laptimesim.py) depend on this staying unchanged."""
+        from laptimesim.src.driver import ay_max_deploy
+
+        assert ay_max_deploy(fcfb_lap.driverobj.pars_driver) == np.inf
+
+    def test_gates_are_overridable(self):
+        """An explicit driver parameter wins over both the default and the FCFB exemption."""
+        from laptimesim.src.driver import (DEFAULT_AY_MAX_DEPLOY, DEFAULT_AY_MAX_HARVEST,
+                                           ay_max_deploy, ay_max_harvest)
+
+        assert ay_max_deploy({"em_strategy": "QUALY"}) == DEFAULT_AY_MAX_DEPLOY
+        assert ay_max_harvest({"em_strategy": "QUALY"}) == DEFAULT_AY_MAX_HARVEST
+        assert ay_max_deploy({"em_strategy": "FCFB", "ay_max_deploy": 25.0}) == 25.0
+        assert ay_max_harvest({"ay_max_harvest": 12.5}) == 12.5
+
+    def test_gate_suppresses_deploy_harvest_reversals(self, qualy_lap):
+        """The ERS must not flip between deploy and harvest on consecutive steps: that pattern
+        is the deploy/harvest limit cycle the gates exist to stop.
+
+        NOTE this covers only ERS-driven chatter. It does NOT detect the separate braking
+        sawtooth in fast corners (see TestCorneringLimitTracking) -- that one produces no sign
+        reversal at all, because it alternates between coasting and braking regen.
+        """
+        # e-motor torque: positive = deploying, negative = harvesting (same sign as its power)
+        m_e = np.asarray(qualy_lap.m_e_motor)
+        sign = np.sign(np.where(np.abs(m_e) < 1e-9, 0.0, m_e))
+        reversals = int(np.sum((sign[:-1] * sign[1:]) < 0))
+        # a handful of legitimate transitions remain; the ungated solver produced dozens
+        assert reversals <= 10, f"{reversals} deploy/harvest reversals -- limit cycle is back"
+
+
+class TestCorneringLimitTracking:
+    """The forward pass has no per-point cornering ceiling, so it cannot track a falling one.
+
+    v_max_cornering() is evaluated reactively, only once the lateral grip check has already
+    failed (lap.py CASE 2), rather than being precomputed per point and enforced as a ceiling
+    the way trackobj.vel_lim is. Through a tightening bend the solver therefore accelerates
+    until the grip check fails, clamps down to v_max_cornering, accelerates again, and so on --
+    a 4-5 m sawtooth of +0.5 / -24 m/s^2 instead of a smooth deceleration.
+
+    This is independent of the ERS gates: it reproduces with active harvest disabled entirely
+    (ay_max_harvest=0.0), and the -350 kW seen during the dips is braking regen riding along on
+    the braking, not harvest. Fixing it means precomputing the ceiling and clamping the forward
+    pass to it, which moves every velocity profile and so needs the frozen references
+    regenerated -- tracked rather than silently tolerated.
+    """
+
+    @pytest.fixture(scope="class")
+    def fast_corner_lap(self):
+        """MVRC 2026 at Barcelona: a 110 m radius bend taken at ~250 km/h and ~4.4 g."""
+        import main_laptimesim
+
+        from helpers.simulation import read_vehicle_params
+
+        track_opts, solver_opts, driver_opts, sa_opts, debug_opts = get_default_opts()
+        track_opts["trackname"] = "BarcelonaGrandPrix_2026"
+        track_opts["interp_stepsize_des"] = 1.0
+        solver_opts["vehicle"] = None
+        solver_opts["custom_vehicle_pars"] = read_vehicle_params("MVRC_2026")
+        solver_opts["vel_tol"] = 1e-5
+        driver_opts["em_strategy"] = "QUALY"
+        driver_opts["initial_energy"] = 4.0e6
+        return main_laptimesim.main(
+            track_opts=track_opts, solver_opts=solver_opts, driver_opts=driver_opts,
+            sa_opts=sa_opts, debug_opts=debug_opts,
+        )
+
+    @staticmethod
+    def _braking_bursts(lap, lo=1100.0, hi=1160.0, thresh=-5.0):
+        """Count separate hard-deceleration events inside a constant-radius bend."""
+        d = np.asarray(lap.trackobj.dists_cl)
+        v = np.asarray(lap.vel_cl)
+        t = np.asarray(lap.t_cl)
+        a = np.diff(v) / np.diff(t)
+        w = (d[:-1] >= lo) & (d[:-1] <= hi)
+        hard = a[w] < thresh
+        return int(np.sum(hard[1:] & ~hard[:-1])) + int(hard[0])
+
+    @pytest.mark.xfail(strict=True, reason="forward pass has no precomputed cornering ceiling; "
+                                          "see class docstring")
+    def test_no_braking_sawtooth_in_fast_corner(self, fast_corner_lap):
+        """A constant-radius bend should be one smooth deceleration, not repeated braking."""
+        assert self._braking_bursts(fast_corner_lap) <= 1
+
+    def test_sawtooth_does_not_get_worse(self, fast_corner_lap):
+        """Regression bound on the known sawtooth: 6 bursts at the time of writing."""
+        assert self._braking_bursts(fast_corner_lap) <= 6
+
+
 class TestHarvestCostBenefit:
     """The harvest cost-benefit gate must keep ERSO/QUALY from losing to NONE even on
     low-power hybrids (F1_Shanghai: 120 kW MGU-K), where unconstrained straight-line
