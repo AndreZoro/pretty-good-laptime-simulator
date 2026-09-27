@@ -150,6 +150,38 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
         unsafe_allow_html=True,
     )
 
+    # 340px velocity/track row + ~44px controls row (in-iframe, not an st.selectbox,
+    # so switching never reloads the component) + 300px detail plot
+    components.html(build_simulation_plots_html(result), height=700)
+
+
+def build_simulation_plots_html(
+    result: SimulationResult,
+    background: str = "transparent",
+    title: str = "",
+    header_html: str = "",
+) -> str:
+    """
+    Build the self-contained HTML document for the simulation plot panel.
+
+    This is the whole visualization -- velocity profile, track map, the variable
+    dropdown and the linked hover -- with plotly.js inlined, so the same document
+    works inside the Streamlit component iframe and as a standalone file written
+    to disk by batch tooling (see run_mvrc_batch.py).
+
+    Args:
+        result: SimulationResult object containing the data to visualize
+        background: CSS background for the page. The default 'transparent' lets the
+            Streamlit theme show through; standalone files need an explicit dark
+            colour because the labels are light.
+        title: Document <title>. Only meaningful for a standalone file.
+        header_html: Optional markup rendered above the plots, e.g. a heading naming
+            the car and its lap time. Empty inside Streamlit, where the page provides
+            the surrounding text.
+
+    Returns:
+        Complete HTML document as a string.
+    """
     # All visualization options are embedded in a single payload and switching
     # happens via client-side Plotly calls (see applyViz() below) rather than a
     # Streamlit rerun. A Streamlit-triggered rerun would hand the iframe a new
@@ -224,9 +256,11 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
 
     html = f"""<!DOCTYPE html>
 <html><head>
+<meta charset="utf-8">
+<title>{title}</title>
 <script>{_get_plotly_js()}</script>
 <style>
-  html, body {{ margin:0; padding:0; background:transparent; font-family:"Source Sans Pro",sans-serif; }}
+  html, body {{ margin:0; padding:0; background:{background}; font-family:"Source Sans Pro",sans-serif; }}
   #controls {{ display:flex; align-items:center; gap:8px; margin:10px 0 4px 0; }}
   #controls label {{ color:#fff; font-size:14px; }}
   #legend {{ color:#bbb; font-size:13px; margin-left:12px; }}
@@ -250,6 +284,7 @@ def render_simulation_plots(result: SimulationResult, key_prefix: str = "") -> N
   }}
 </style>
 </head><body>
+{header_html}
 <div id="wrap">
   <div id="profile"></div>
   <div id="trackmap"></div>
@@ -507,9 +542,7 @@ document.getElementById('viz-select').addEventListener('change', function(ev) {{
 </script>
 </body></html>"""
 
-    # 340px velocity/track row + ~44px controls row (in-iframe, not an st.selectbox,
-    # so switching never reloads the component) + 300px detail plot
-    components.html(html, height=700)
+    return html
 
 
 def create_profile_chart(
