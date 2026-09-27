@@ -7,8 +7,10 @@ in the parameter search optimizer.
 
 import os
 import re
+from datetime import datetime
 
 import numpy as np
+import pandas as pd
 
 # Map sim track names to FastF1 GP identifiers
 TRACK_NAME_MAP = {
@@ -64,8 +66,10 @@ TRACK_NAME_MAP = {
     # ── 2026 season ───────────────────────────────────────────────────────
     "AustralianGrandPrix_2026": "Australian Grand Prix",
     "AustrianGrandPrix_2026": "Austrian Grand Prix",
-    # the 2026 raceline is named after the circuit, the event is the Spanish GP
-    "BarcelonaGrandPrix_2026": "Spanish Grand Prix",
+    # 2026 splits the two Spanish rounds: Barcelona has its own event, while the
+    # "Spanish Grand Prix" moves to Madrid. Mapping this to the Spanish GP -- as it
+    # was until 2025, when Barcelona *was* the Spanish GP -- silently fetched Madrid.
+    "BarcelonaGrandPrix_2026": "Barcelona Grand Prix",
     "BelgianGrandPrix_2026": "Belgian Grand Prix",
     "BritishGrandPrix_2026": "British Grand Prix",
     "CanadianGrandPrix_2026": "Canadian Grand Prix",
@@ -102,7 +106,8 @@ GP_LOCATIONS = {
     "São Paulo Grand Prix": "Interlagos",
     "Saudi Arabian Grand Prix": "Jeddah",
     "Singapore Grand Prix": "Marina Bay",
-    "Spanish Grand Prix": "Barcelona",
+    "Spanish Grand Prix": "Barcelona",  # Madrid from 2026 -- read the schedule, not this
+    "Barcelona Grand Prix": "Barcelona",
     "United States Grand Prix": "Austin",
 }
 
@@ -177,6 +182,95 @@ def get_available_years():
     return list(range(2018, 2028))
 
 
+# FastF1 only carries car telemetry from 2018 on.
+FIRST_TELEMETRY_SEASON = 2018
+
+
+def get_seasons() -> list[int]:
+    """Seasons that can hold telemetry, oldest first, up to the current calendar year."""
+    return list(range(FIRST_TELEMETRY_SEASON, datetime.now().year + 1))
+
+
+def get_events(year: int, past_only: bool = True) -> list[dict]:
+    """Ask FastF1 for the race calendar of a season.
+
+    Reading the schedule instead of a hand-maintained name map is the only way to get
+    this right: the calendar changes every year, and an event name is not tied to one
+    circuit. In 2026 "Spanish Grand Prix" is Madrid while Barcelona has its own round,
+    so any static sim-track-to-event mapping silently returns the wrong circuit.
+
+    Args:
+        year: season
+        past_only: drop events whose date has not passed -- a future round has no
+            telemetry to download
+
+    Returns:
+        List of dicts with round, name, location, country and date, in calendar order.
+        Pre-season testing (round 0) is excluded.
+    """
+    import fastf1
+
+    setup_cache()
+
+    schedule = fastf1.get_event_schedule(year)
+    today = pd.Timestamp(datetime.now().date())
+
+    events = []
+    for _, row in schedule.iterrows():
+        if int(row["RoundNumber"]) == 0:  # pre-season testing
+            continue
+
+        date = row["EventDate"]
+        if past_only and pd.notna(date) and pd.Timestamp(date) > today:
+            continue
+
+        events.append({
+            "round": int(row["RoundNumber"]),
+            "name": str(row["EventName"]),
+            "location": str(row["Location"]),
+            "country": str(row["Country"]),
+            "date": str(pd.Timestamp(date).date()) if pd.notna(date) else "",
+            "sessions": [
+                str(row[f"Session{i}"]) for i in range(1, 6)
+                if f"Session{i}" in row and pd.notna(row[f"Session{i}"])
+                and str(row[f"Session{i}"]).lower() != "none"
+            ],
+        })
+
+    return events
+
+
+def event_display(event: dict) -> str:
+    """One-line label for an event picker."""
+    return f"R{event['round']:02d}  {event['name']} — {event['location']} ({event['date']})"
+
+
+def suggest_event(sim_track: str | None, events: list[dict]) -> dict | None:
+    """Best guess at which scheduled event a sim track refers to, or None.
+
+    Matches the track name against the real schedule rather than a static map, so a
+    renamed or relocated event cannot send the download to another circuit. The circuit
+    location is tried before the event name: racelines are usually named after the
+    circuit, and that is the part that identifies the track.
+    """
+    if not sim_track or not events:
+        return None
+
+    base = _YEAR_RE.sub("", sim_track).strip("_")
+    words = {w.lower() for w in _CAMEL_RE.sub(" ", base).split() if w}
+    words -= {"grand", "prix", "gp"}
+    if not words:
+        return None
+
+    for key in ("location", "name"):
+        for event in events:
+            field = {w.lower() for w in re.split(r"[\s_-]+", event[key]) if w}
+            if words & field:
+                return event
+
+    return None
+
+
 def get_available_gps(sim_tracks: list[str]) -> dict[str, str]:
     """
     Return dict of sim track names that have a FastF1 mapping.
@@ -195,6 +289,7 @@ def load_speed_trace(
     gp: str,
     session_type: str = "Q",
     driver: str | None = None,
+    with_position: bool = False,
 ) -> dict:
     """
     Download and extract telemetry channels from FastF1.
@@ -204,11 +299,15 @@ def load_speed_trace(
         gp: Grand Prix name (FastF1 format, e.g. "Chinese Grand Prix")
         session_type: "Q" for qualifying, "R" for race
         driver: Driver abbreviation (e.g. "VER"). None = fastest lap overall.
+        with_position: also return the car's track position, resampled onto the car-data
+            grid. Off by default: the parameter identification pages fit against this
+            trace, and the sample grid must not move under them.
 
     Returns:
         Dict with keys:
         - distance: ndarray of cumulative distance in meters
         - speed: ndarray of speed in m/s
+        - time: ndarray of seconds since the start of the lap
         - lap_time: lap time in seconds
         - sector_times: [S1, S2, S3] in seconds
         - throttle: ndarray 0-100 or None
@@ -217,6 +316,9 @@ def load_speed_trace(
         - rpm: ndarray of engine RPM or None
         - drs: ndarray of raw DRS status codes or None
         - drs_active: ndarray of binary DRS active flag or None
+        - pos_x, pos_y: ndarray of track position in meters, or None (only with
+          with_position; None as well when the session carries no position data)
+        - driver: the driver the lap belongs to (resolved when none was requested)
     """
     import fastf1
 
@@ -237,6 +339,10 @@ def load_speed_trace(
     distance_m = car_data["Distance"].to_numpy().astype(float)
     speed_kmh = car_data["Speed"].to_numpy().astype(float)
     speed_mps = speed_kmh / 3.6
+
+    # Sample times relative to the start of the lap. Taken from the samples rather than
+    # integrated from the speed trace, which would accumulate the sampling error.
+    t_car = (car_data["Time"] - car_data["Time"].iloc[0]).dt.total_seconds().to_numpy()
 
     # Lap time in seconds
     lap_time_s = lap["LapTime"].total_seconds()
@@ -264,9 +370,26 @@ def load_speed_trace(
     if drs_raw is not None:
         drs_active = np.isin(drs_raw.astype(int), [10, 12, 14]).astype(float)
 
+    # Track position lives on its own sample grid; put it on the car-data grid by
+    # interpolating over the shared lap time. FastF1 reports X/Y in 1/10 m.
+    pos_x = pos_y = None
+    if with_position:
+        try:
+            pos_data = lap.get_pos_data()
+            t_pos = (
+                (pos_data["Time"] - pos_data["Time"].iloc[0]).dt.total_seconds().to_numpy()
+            )
+            pos_x = np.interp(t_car, t_pos, pos_data["X"].to_numpy().astype(float)) / 10.0
+            pos_y = np.interp(t_car, t_pos, pos_data["Y"].to_numpy().astype(float)) / 10.0
+        except (KeyError, ValueError, AttributeError):
+            # Older or partially loaded sessions can be missing position data entirely;
+            # the speed trace is still usable, so this must not fail the download.
+            pos_x = pos_y = None
+
     return {
         "distance": distance_m,
         "speed": speed_mps,
+        "time": t_car,
         "lap_time": lap_time_s,
         "sector_times": sector_times,
         "throttle": throttle,
@@ -275,6 +398,9 @@ def load_speed_trace(
         "rpm": rpm,
         "drs": drs_raw,
         "drs_active": drs_active,
+        "pos_x": pos_x,
+        "pos_y": pos_y,
+        "driver": str(lap["Driver"]) if "Driver" in lap else driver,
     }
 
 

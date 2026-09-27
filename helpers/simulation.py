@@ -237,8 +237,18 @@ class SimulationResult:
         return f"{self.sector_times[sector]:.3f}"
 
 
-def get_available_tracks() -> list[str]:
-    """Get list of available track names that have both raceline and parameters defined."""
+# Suffix of the 2026 calendar racelines. Other "_2026" files in the raceline folder are
+# intermediate FastF1 extractions that duplicate these, so the MVRC pages filter on it.
+TRACK_SUFFIX_2026 = "GrandPrix_2026"
+
+
+def get_available_tracks(suffix: str | None = None) -> list[str]:
+    """Get list of available track names that have both raceline and parameters defined.
+
+    Args:
+        suffix: keep only tracks whose name ends with this. Falls back to the full list
+            rather than an empty dropdown when nothing matches.
+    """
     repo_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     tracks_path = os.path.join(repo_path, "laptimesim", "input", "tracks", "racelines")
     pars_path = os.path.join(repo_path, "laptimesim", "input", "tracks", "track_pars.ini")
@@ -259,9 +269,12 @@ def get_available_tracks() -> list[str]:
     defined_tracks = set(track_pars.keys())
 
     # Only return tracks that have both raceline and parameters
-    valid_tracks = raceline_tracks & defined_tracks
+    tracks = sorted(raceline_tracks & defined_tracks)
 
-    return sorted(valid_tracks)
+    if suffix:
+        return [t for t in tracks if t.endswith(suffix)] or tracks
+
+    return tracks
 
 
 def get_available_vehicles() -> list[str]:

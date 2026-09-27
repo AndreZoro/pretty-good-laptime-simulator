@@ -176,7 +176,10 @@ def render_comparison(runs: list[SimulationResult] | None = None) -> None:
         with col:
             st.metric("Max Speed", f"{np.max(run.velocity_kmh):.1f} km/h")
             st.metric("Avg Speed", f"{np.mean(run.velocity_kmh):.1f} km/h")
-            st.metric("Energy", f"{run.energy_consumed:.1f} kJ")
+            # FastF1 reference laps carry NaN here: energy cannot be measured from public
+            # telemetry, and a 0.0 would read as a measured value.
+            energy = run.energy_consumed
+            st.metric("Energy", f"{energy:.1f} kJ" if np.isfinite(energy) else "—")
 
     st.divider()
 

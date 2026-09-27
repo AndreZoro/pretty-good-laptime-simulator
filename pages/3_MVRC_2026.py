@@ -17,6 +17,7 @@ from helpers.comparison import (
     saved_runs,
 )
 from helpers.simulation import (
+    TRACK_SUFFIX_2026,
     get_available_tracks,
     read_vehicle_params,
     run_simulation_advanced,
@@ -62,16 +63,11 @@ def cooling_flow_to_power(flow: float) -> float:
 # Sidebar controls
 st.sidebar.header("Track Selection")
 
-# Restrict the selection to the 2026 calendar racelines. Other "_2026" files in the
-# raceline folder are intermediate FastF1 extractions that duplicate these.
-TRACK_SUFFIX_2026 = "GrandPrix_2026"
 DEFAULT_TRACK = "BarcelonaGrandPrix_2026"
 
-available_tracks = sorted(
-    t for t in get_available_tracks() if t.endswith(TRACK_SUFFIX_2026)
-)
-if not available_tracks:  # fall back rather than render an empty dropdown
-    available_tracks = get_available_tracks()
+# Restricted to the 2026 calendar racelines; the filter lives in helpers/simulation.py
+# so the FastF1 reference page offers the same list in the MVRC app.
+available_tracks = get_available_tracks(TRACK_SUFFIX_2026)
 
 track = st.sidebar.selectbox(
     "Track",

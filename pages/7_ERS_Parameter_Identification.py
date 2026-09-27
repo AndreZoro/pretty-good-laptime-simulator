@@ -20,18 +20,13 @@ from scipy.optimize import Bounds, minimize
 
 from helpers.fastf1_data import (
     compute_trace_r2,
-    DEFAULT_FASTF1_YEAR,
     DEFAULT_TRACE_METRIC,
     TRACE_METRICS,
     TRACK_NAME_MAP,
     compute_trace_error,
-    get_available_gp_names,
-    get_available_years,
-    get_drivers_in_session,
-    gp_location,
     load_speed_trace,
-    resolve_fastf1_event,
 )
+from helpers.fastf1_ui import render_event_picker
 from helpers.simulation import (
     DEFAULT_EM_STRATEGY,
     EM_STRATEGIES,
@@ -534,48 +529,23 @@ ref_distance = None
 ref_velocity = None
 
 if target_source == "FastF1 Telemetry":
-    # Event and season follow the track selected above ("AustralianGrandPrix_2026" -> the
-    # 2026 Australian GP at Melbourne); the manual pickers are only for the exceptions.
-    gp_auto, year_auto = resolve_fastf1_event(track)
-    ff1_year = year_auto or DEFAULT_FASTF1_YEAR
-    gp_name = gp_auto
+    # The event comes from FastF1's calendar for the chosen season, with the simulation
+    # track only preselecting the likely round. Deriving it from the track name alone
+    # was wrong whenever the calendar moved: in 2026 the "Spanish Grand Prix" is Madrid
+    # while Barcelona is its own event, so a Barcelona raceline silently fetched Madrid.
+    selection = render_event_picker(sim_track=track, key_prefix="ers_")
 
-    if gp_auto is not None:
-        _loc = gp_location(gp_auto)
+    if selection is None:
+        st.sidebar.info("Pick a season with completed events to download telemetry.")
+    else:
+        ff1_year = selection["year"]
+        gp_name = selection["gp"]
+        ff1_session = selection["session"]
+        ff1_driver = selection["driver"]
+
         st.sidebar.caption(
-            f"Reference: **{ff1_year} {gp_auto}**" + (f" · {_loc}" if _loc else "")
+            f"Reference: **{ff1_year} {gp_name}** · {selection['location']}"
         )
-    else:
-        st.sidebar.warning(
-            f"No FastF1 event known for '{track}'. Pick the event manually below."
-        )
-
-    override = st.sidebar.checkbox(
-        "Pick FastF1 event manually",
-        value=gp_auto is None,
-        help="By default the event and season follow the simulation track selected above.",
-    )
-
-    if override:
-        _years = get_available_years()
-        ff1_year = st.sidebar.selectbox(
-            "Year", options=_years,
-            index=_years.index(ff1_year) if ff1_year in _years else len(_years) - 1,
-        )
-        _gp_names = get_available_gp_names()
-        gp_name = st.sidebar.selectbox(
-            "Grand Prix", options=_gp_names,
-            index=_gp_names.index(gp_auto) if gp_auto in _gp_names else 0,
-        )
-
-    if gp_name is None:
-        st.sidebar.info("Select a Grand Prix to download telemetry.")
-    else:
-        ff1_session = st.sidebar.radio("Session", options=["Q", "R"], horizontal=True,
-                                        help="Q = Qualifying, R = Race")
-        ff1_driver = st.sidebar.text_input("Driver (optional)", value="",
-                                            help="3-letter abbreviation. Leave empty for fastest lap.")
-        ff1_driver = ff1_driver.strip().upper() or None
 
         download_button = st.sidebar.button("Download Telemetry", type="secondary", width="stretch")
 
@@ -593,6 +563,7 @@ if target_source == "FastF1 Telemetry":
                         "v_max": float(np.max(vel)),
                         "year": ff1_year, "gp": gp_name,
                         "session": ff1_session, "driver": ff1_driver, "track": track,
+                        "location": selection["location"],
                         "throttle": ff1_data["throttle"], "brake": ff1_data["brake"],
                         "gear": ff1_data["gear"], "rpm": ff1_data["rpm"],
                         "drs": ff1_data["drs"], "drs_active": ff1_data["drs_active"],
@@ -1073,7 +1044,7 @@ else:
         - **Harvest activation speed (ers_harvest_speed_kmh)**
 
         **Target modes:**
-        - **FastF1 Telemetry:** Full speed trace RMSE — captures the velocity plateau
+        - **[FastF1 Telemetry](https://github.com/theOehrly/Fast-F1):** Full speed trace RMSE — captures the velocity plateau
           and pre-braking deceleration caused by ERS harvest
         - **Manual:** 3 sector times + max velocity
         """)

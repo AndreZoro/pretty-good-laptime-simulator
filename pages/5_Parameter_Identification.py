@@ -18,18 +18,13 @@ from scipy.optimize import Bounds, minimize
 
 from helpers.fastf1_data import (
     compute_trace_r2,
-    DEFAULT_FASTF1_YEAR,
     DEFAULT_TRACE_METRIC,
     TRACE_METRICS,
     TRACK_NAME_MAP,
     compute_trace_error,
-    get_available_gp_names,
-    get_available_years,
-    get_drivers_in_session,
-    gp_location,
     load_speed_trace,
-    resolve_fastf1_event,
 )
+from helpers.fastf1_ui import render_event_picker
 from helpers.simulation import (
     DEFAULT_EM_STRATEGY,
     EM_STRATEGIES,
@@ -933,60 +928,23 @@ ref_distance = None
 ref_velocity = None
 
 if target_source == "FastF1 Telemetry":
-    # The reference lap follows the track selected above -- "AustralianGrandPrix_2026" is
-    # the 2026 Australian GP at Melbourne -- so the event is not picked a second time here.
-    # Comparing the simulation against telemetry from a different circuit is meaningless,
-    # which is why the manual pickers stay behind a checkbox.
-    gp_auto, year_auto = resolve_fastf1_event(track)
-    ff1_year = year_auto or DEFAULT_FASTF1_YEAR
-    gp_name = gp_auto
+    # The event comes from FastF1's calendar for the chosen season, with the simulation
+    # track only preselecting the likely round. Deriving it from the track name alone
+    # was wrong whenever the calendar moved: in 2026 the "Spanish Grand Prix" is Madrid
+    # while Barcelona is its own event, so a Barcelona raceline silently fetched Madrid.
+    selection = render_event_picker(sim_track=track, key_prefix="pid_")
 
-    if gp_auto is not None:
-        _loc = gp_location(gp_auto)
+    if selection is None:
+        st.sidebar.info("Pick a season with completed events to download telemetry.")
+    else:
+        ff1_year = selection["year"]
+        gp_name = selection["gp"]
+        ff1_session = selection["session"]
+        ff1_driver = selection["driver"]
+
         st.sidebar.caption(
-            f"Reference: **{ff1_year} {gp_auto}**" + (f" · {_loc}" if _loc else "")
+            f"Reference: **{ff1_year} {gp_name}** · {selection['location']}"
         )
-    else:
-        st.sidebar.warning(
-            f"No FastF1 event known for '{track}'. Pick the event manually below."
-        )
-
-    override = st.sidebar.checkbox(
-        "Pick FastF1 event manually",
-        value=gp_auto is None,
-        help="By default the event and season follow the simulation track selected above.",
-    )
-
-    if override:
-        _years = get_available_years()
-        ff1_year = st.sidebar.selectbox(
-            "Year",
-            options=_years,
-            index=_years.index(ff1_year) if ff1_year in _years else len(_years) - 1,
-        )
-        _gp_names = get_available_gp_names()
-        gp_name = st.sidebar.selectbox(
-            "Grand Prix",
-            options=_gp_names,
-            index=_gp_names.index(gp_auto) if gp_auto in _gp_names else 0,
-            help="Telemetry from another circuit cannot be compared to this simulation.",
-        )
-
-    if gp_name is None:
-        st.sidebar.info("Select a Grand Prix to download telemetry.")
-    else:
-        ff1_session = st.sidebar.radio(
-            "Session",
-            options=["Q", "R"],
-            horizontal=True,
-            help="Q = Qualifying, R = Race",
-        )
-        ff1_driver = st.sidebar.text_input(
-            "Driver (optional)",
-            value="",
-            help="3-letter abbreviation (e.g. VER, HAM). Leave empty for fastest lap.",
-        )
-        ff1_driver = ff1_driver.strip().upper() or None
 
         download_button = st.sidebar.button(
             "Download Telemetry", type="secondary", width="stretch"
@@ -1015,6 +973,7 @@ if target_source == "FastF1 Telemetry":
                         "session": ff1_session,
                         "driver": ff1_driver,
                         "track": track,
+                        "location": selection["location"],
                         "throttle": ff1_data["throttle"],
                         "brake": ff1_data["brake"],
                         "gear": ff1_data["gear"],
@@ -2012,7 +1971,12 @@ else:
     if st.session_state.fastf1_trace is not None:
         trace = st.session_state.fastf1_trace
         driver_str = trace["driver"] if trace["driver"] else "Fastest"
-        title_str = f"{trace['year']} {trace['gp']} ({trace['session']}) - {driver_str}"
+        # Name the circuit too: an event name does not pin one down (the 2026 Spanish GP
+        # is Madrid, not Barcelona), and this title is how a wrong pick gets noticed.
+        where = f" @ {trace['location']}" if trace.get("location") else ""
+        title_str = (
+            f"{trace['year']} {trace['gp']}{where} ({trace['session']}) - {driver_str}"
+        )
         st.subheader(f"Downloaded Telemetry Preview")
 
         dist_km = trace["distance"] / 1000
@@ -2128,7 +2092,7 @@ else:
         - Engine power (pow_max)
 
         **Target modes:**
-        - **FastF1 Telemetry:** Full speed trace from real F1 data (hundreds of constraints)
+        - **[FastF1 Telemetry](https://github.com/theOehrly/Fast-F1):** Full speed trace from real F1 data (hundreds of constraints)
         - **Manual:** 3 sector times + max velocity (4 constraints)
         """)
 
