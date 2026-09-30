@@ -229,17 +229,12 @@ def _roll_res(f_z_tot, f_roll):
 
 
 @njit(cache=True)
-def _v_max_cornering(kappa, mu, vel_subtr_corner, params, fz_data):
-    """
-    Find maximum cornering velocity using binary search.
-    Entire binary search runs in compiled code.
-    """
-    no_steps = 546
-    vel_max = 110.0
+def _cornering_feasible(vel, kappa, mu, params, fz_data):
+    """Can the car hold this curvature at this velocity (pure cornering, a_x = 0)?
 
-    # build velocity range inline (avoid np.linspace allocation)
-    vel_step = (vel_max - 1.0) / (no_steps - 1)
-
+    True when both axles can transmit the lateral force AND the remaining longitudinal
+    potential still covers drag plus rolling resistance.
+    """
     m = params[_M]
     lf = params[_LF]
     lr = params[_LR]
@@ -250,52 +245,72 @@ def _v_max_cornering(kappa, mu, vel_subtr_corner, params, fz_data):
     f_roll = params[_FROLL]
     diff_lock_ratio = params[_DIFF_LOCK]
 
-    ind_first = 0
-    ind_last = no_steps - 1
-    ind_mid = (ind_first + ind_last + 1) // 2
+    a_y = vel * vel * kappa
+    f_y_f, f_y_r = _calc_lat_forces(a_y, m, lf, lr)
 
-    while ind_first != ind_last:
-        vel_mid = 1.0 + ind_mid * vel_step
+    (f_x_pot_fl, f_y_pot_fl, f_z_fl,
+     f_x_pot_fr, f_y_pot_fr, f_z_fr,
+     f_x_pot_rl, f_y_pot_rl, f_z_rl,
+     f_x_pot_rr, f_y_pot_rr, f_z_rr) = _tire_force_pots(vel, 0.0, a_y, mu, params, fz_data)
 
-        # lateral acceleration and forces
-        a_y = vel_mid * vel_mid * kappa
-        f_y_f, f_y_r = _calc_lat_forces(a_y, m, lf, lr)
+    if not (abs(f_y_f) < f_y_pot_fl + f_y_pot_fr
+            and abs(f_y_r) < f_y_pot_rl + f_y_pot_rr):
+        return False
 
-        # tire force potentials (a_x = 0.0 at maximum cornering)
-        (f_x_pot_fl, f_y_pot_fl, f_z_fl,
-         f_x_pot_fr, f_y_pot_fr, f_z_fr,
-         f_x_pot_rl, f_y_pot_rl, f_z_rl,
-         f_x_pot_rr, f_y_pot_rr, f_z_rr) = _tire_force_pots(vel_mid, 0.0, a_y, mu, params, fz_data)
+    f_x_poss = _calc_f_x_pot(
+        f_x_pot_fl, f_x_pot_fr, f_x_pot_rl, f_x_pot_rr,
+        f_y_pot_fl + f_y_pot_fr, f_y_pot_rl + f_y_pot_rr,
+        f_y_f, f_y_r,
+        topology, exp, False, 0, diff_lock_ratio)
 
-        # check if potential is left
-        if (abs(f_y_f) < f_y_pot_fl + f_y_pot_fr
-                and abs(f_y_r) < f_y_pot_rl + f_y_pot_rr):
+    f_z_tot = f_z_fl + f_z_fr + f_z_rl + f_z_rr
+    f_x_drag = _air_res(vel, False, rho_air, c_w_a, 0.0) + _roll_res(f_z_tot, f_roll)
 
-            f_x_poss = _calc_f_x_pot(
-                f_x_pot_fl, f_x_pot_fr, f_x_pot_rl, f_x_pot_rr,
-                f_y_pot_fl + f_y_pot_fr, f_y_pot_rl + f_y_pot_rr,
-                f_y_f, f_y_r,
-                topology, exp, False, 0, diff_lock_ratio)
+    return f_x_poss >= f_x_drag
 
-            f_z_tot = f_z_fl + f_z_fr + f_z_rl + f_z_rr
-            f_x_drag = _air_res(vel_mid, False, rho_air, c_w_a, 0.0) + _roll_res(f_z_tot, f_roll)
 
-            if f_x_poss < f_x_drag:
-                potential_exceeded = True
-            else:
-                potential_exceeded = False
+@njit(cache=True)
+def _v_max_cornering(kappa, mu, vel_subtr_corner, params, fz_data):
+    """Maximum cornering velocity [m/s], by continuous bisection on the feasibility test.
+
+    This used to bisect a FIXED GRID of 546 velocities between 1 and 110 m/s, i.e. it returned
+    the ceiling quantised to 0.2 m/s. That quantisation was visible in the solver: through a
+    gradually tightening bend the ceiling fell in 0.2 m/s steps, and shedding 0.2 m/s inside a
+    single 1 m step needs about -13 m/s^2, so the velocity profile showed a hold/brake sawtooth
+    with exactly that amplitude. Bisecting the interval itself instead makes the ceiling smooth,
+    and costs ~27 cheap iterations instead of ~10.
+    """
+    vel_lo = 1.0    # assumed feasible (matches the old grid's floor)
+    vel_hi = 110.0  # assumed infeasible
+
+    if not _cornering_feasible(vel_lo, kappa, mu, params, fz_data):
+        return vel_lo - vel_subtr_corner
+
+    if _cornering_feasible(vel_hi, kappa, mu, params, fz_data):
+        return vel_hi - vel_subtr_corner
+
+    # 27 halvings take the 109 m/s bracket below 1e-6 m/s
+    for _ in range(27):
+        vel_mid = 0.5 * (vel_lo + vel_hi)
+        if _cornering_feasible(vel_mid, kappa, mu, params, fz_data):
+            vel_lo = vel_mid
         else:
-            potential_exceeded = True
+            vel_hi = vel_mid
 
-        if not potential_exceeded:
-            ind_first = ind_mid
-        else:
-            ind_last = ind_mid - 1
+    return vel_lo - vel_subtr_corner
 
-        ind_mid = (ind_first + ind_last + 1) // 2
 
-    vel_result = 1.0 + ind_mid * vel_step
-    return vel_result - vel_subtr_corner
+@njit(cache=True)
+def _v_max_cornering_arr(kappa, mu, vel_subtr_corner, params, fz_data, out):
+    """Maximum cornering velocity for every point, written into 'out'.
+
+    Same result as calling _v_max_cornering() per point -- it exists so the solver can hold the
+    cornering ceiling as an array and enforce it in the forward pass, instead of evaluating it
+    reactively once the lateral grip check has already failed.
+    """
+    for i in range(kappa.shape[0]):
+        out[i] = _v_max_cornering(kappa[i], mu[i], vel_subtr_corner, params, fz_data)
+    return out
 
 
 @njit(cache=True)

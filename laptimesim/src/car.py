@@ -10,6 +10,7 @@ from laptimesim.src._jit_kernels import (
     _air_res,
     _roll_res,
     _v_max_cornering,
+    _v_max_cornering_arr,
     _calc_max_ax,
     PARAMS_SIZE,
 )
@@ -384,6 +385,21 @@ class Car(object):
         subtracted from the found cornering velocity because drivers in reality will not hit the maximum perfectly.
         """
         return _v_max_cornering(kappa, mu, vel_subtr_corner, self._jit_params, self._jit_fz_data)
+
+    def v_max_cornering_arr(
+        self, kappa: np.ndarray, mu: np.ndarray, vel_subtr_corner: float = 0.5
+    ) -> np.ndarray:
+        """Per-point version of v_max_cornering() for a whole track, same units and meaning.
+
+        Returned as an array so the solver can enforce the cornering ceiling in its forward
+        pass rather than discovering it after the lateral grip check has already failed.
+        """
+        out = np.empty(kappa.shape[0], dtype=np.float64)
+        return _v_max_cornering_arr(
+            np.ascontiguousarray(kappa, dtype=np.float64),
+            np.ascontiguousarray(mu, dtype=np.float64),
+            vel_subtr_corner, self._jit_params, self._jit_fz_data, out,
+        )
 
     def calc_f_x_pot(
         self,

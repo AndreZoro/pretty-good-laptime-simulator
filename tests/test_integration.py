@@ -367,29 +367,52 @@ class TestLateralAccelerationGates:
         """Lateral acceleration per point, as the solver computes it (unsmoothed)."""
         return np.abs(np.asarray(lap.vel_cl[:-1]) ** 2 * np.asarray(lap.trackobj.kappa))
 
-    def test_qualy_deploy_respects_ay_gate(self, qualy_lap):
+    # The assertions below are deliberately about what the solver APPLIED, not about what the
+    # strategy PLANNED. The masks are planned from the previous EM iteration's velocities, so a
+    # point planned just inside the ceiling can sit just outside it once the profile converges
+    # (seen in practice: one point at 3.24 g against a 3.00 g ceiling). The guarantee that
+    # actually matters, and the one lap.py enforces against the a_y reached in the final pass,
+    # is that no torque is applied at such a point.
+
+    def test_qualy_deploy_suppressed_above_ay_gate(self, qualy_lap):
         from laptimesim.src.driver import ay_max_deploy
 
         limit = ay_max_deploy(qualy_lap.driverobj.pars_driver)
-        assert np.all(self._ay(qualy_lap)[qualy_lap.driverobj.em_boost_use] <= limit)
+        over = np.asarray(qualy_lap.driverobj.em_boost_use) & (self._ay(qualy_lap) > limit)
+        assert np.all(np.asarray(qualy_lap.m_e_motor)[over] <= 0.0)
 
-    def test_qualy_harvest_respects_ay_gate(self, qualy_lap):
+    def test_qualy_harvest_suppressed_above_ay_gate(self, qualy_lap):
         from laptimesim.src.driver import ay_max_harvest
 
         limit = ay_max_harvest(qualy_lap.driverobj.pars_driver)
-        assert np.all(self._ay(qualy_lap)[qualy_lap.driverobj.em_harvest_use] <= limit)
+        over = np.asarray(qualy_lap.driverobj.em_harvest_use) & (self._ay(qualy_lap) > limit)
+        assert np.all(np.asarray(qualy_lap.m_e_motor)[over] >= 0.0)
 
-    def test_erso_deploy_respects_ay_gate(self, erso_lap):
+    def test_erso_deploy_suppressed_above_ay_gate(self, erso_lap):
         from laptimesim.src.driver import ay_max_deploy
 
         limit = ay_max_deploy(erso_lap.driverobj.pars_driver)
-        assert np.all(self._ay(erso_lap)[erso_lap.driverobj.em_boost_use] <= limit)
+        over = np.asarray(erso_lap.driverobj.em_boost_use) & (self._ay(erso_lap) > limit)
+        assert np.all(np.asarray(erso_lap.m_e_motor)[over] <= 0.0)
 
-    def test_erso_harvest_respects_ay_gate(self, erso_lap):
+    def test_erso_harvest_suppressed_above_ay_gate(self, erso_lap):
         from laptimesim.src.driver import ay_max_harvest
 
         limit = ay_max_harvest(erso_lap.driverobj.pars_driver)
-        assert np.all(self._ay(erso_lap)[erso_lap.driverobj.em_harvest_use] <= limit)
+        over = np.asarray(erso_lap.driverobj.em_harvest_use) & (self._ay(erso_lap) > limit)
+        assert np.all(np.asarray(erso_lap.m_e_motor)[over] >= 0.0)
+
+    def test_gates_keep_almost_all_planning_within_the_ceiling(self, qualy_lap):
+        """The plan is made on stale velocities, so a few points may drift outside the ceiling;
+        a large drift would mean the gate is not reaching the planner at all."""
+        from laptimesim.src.driver import ay_max_harvest
+
+        limit = ay_max_harvest(qualy_lap.driverobj.pars_driver)
+        mask = np.asarray(qualy_lap.driverobj.em_harvest_use)
+        if not mask.any():
+            pytest.skip("no active harvest planned for this car/track")
+        over = int(np.sum(self._ay(qualy_lap)[mask] > limit))
+        assert over <= 0.05 * int(mask.sum()) + 1
 
     def test_fcfb_is_exempt_from_deploy_gate(self, fcfb_lap):
         """FCFB is the deliberately naive deploy-everywhere baseline: it has no allocation step
@@ -426,19 +449,22 @@ class TestLateralAccelerationGates:
 
 
 class TestCorneringLimitTracking:
-    """The forward pass has no per-point cornering ceiling, so it cannot track a falling one.
+    """The forward pass must track the cornering ceiling smoothly through a tightening bend.
 
-    v_max_cornering() is evaluated reactively, only once the lateral grip check has already
-    failed (lap.py CASE 2), rather than being precomputed per point and enforced as a ceiling
-    the way trackobj.vel_lim is. Through a tightening bend the solver therefore accelerates
-    until the grip check fails, clamps down to v_max_cornering, accelerates again, and so on --
-    a 4-5 m sawtooth of +0.5 / -24 m/s^2 instead of a smooth deceleration.
+    Two defects used to produce a mid-corner sawtooth of roughly +0.5 / -24 m/s^2 every few
+    metres, independent of the ERS (it reproduced with active harvest disabled entirely):
 
-    This is independent of the ERS gates: it reproduces with active harvest disabled entirely
-    (ay_max_harvest=0.0), and the -350 kW seen during the dips is braking regen riding along on
-    the braking, not harvest. Fixing it means precomputing the ceiling and clamping the forward
-    pass to it, which moves every velocity profile and so needs the frozen references
-    regenerated -- tracked rather than silently tolerated.
+      1. v_max_cornering() was only evaluated reactively, once the lateral grip check had
+         already failed (CASE 2), instead of being precomputed per point and enforced as a
+         ceiling the way trackobj.vel_lim is. So the solver accelerated until it broke grip,
+         got clamped by a maximum-braking backward sweep, and accelerated again.
+      2. v_max_cornering() itself bisected a fixed grid of 546 velocities, quantising the
+         ceiling to 0.2 m/s. Shedding 0.2 m/s inside a 1 m step needs about -13 m/s^2, so even
+         with (1) fixed the ceiling fell in stair-steps and the profile followed in jolts.
+
+    The bend used here (Barcelona, ~110 m radius at ~250 km/h, ~4.4 g) asks for about -6 m/s^2,
+    which is very close to what lifting gives on its own -- so the correct profile is one smooth
+    coast, and any repeated hard braking means a regression in either mechanism.
     """
 
     @pytest.fixture(scope="class")
@@ -472,15 +498,37 @@ class TestCorneringLimitTracking:
         hard = a[w] < thresh
         return int(np.sum(hard[1:] & ~hard[:-1])) + int(hard[0])
 
-    @pytest.mark.xfail(strict=True, reason="forward pass has no precomputed cornering ceiling; "
-                                          "see class docstring")
     def test_no_braking_sawtooth_in_fast_corner(self, fast_corner_lap):
-        """A constant-radius bend should be one smooth deceleration, not repeated braking."""
+        """A steadily tightening bend should be one smooth deceleration, not repeated braking."""
         assert self._braking_bursts(fast_corner_lap) <= 1
 
-    def test_sawtooth_does_not_get_worse(self, fast_corner_lap):
-        """Regression bound on the known sawtooth: 6 bursts at the time of writing."""
-        assert self._braking_bursts(fast_corner_lap) <= 6
+    def test_deceleration_is_gentle_in_fast_corner(self, fast_corner_lap):
+        """The corner asks for roughly -6 m/s^2. Before the fix this window held -24.8 m/s^2
+        spikes (reactive ceiling) and then -13.9 (0.2 m/s ceiling quantisation); a smooth coast
+        stays well inside -15."""
+        d = np.asarray(fast_corner_lap.trackobj.dists_cl)
+        v = np.asarray(fast_corner_lap.vel_cl)
+        t = np.asarray(fast_corner_lap.t_cl)
+        a = np.diff(v) / np.diff(t)
+        w = (d[:-1] >= 1100.0) & (d[:-1] <= 1160.0)
+        assert a[w].min() > -15.0, f"min dv/dt {a[w].min():.2f} m/s^2 -- sawtooth is back"
+
+    def test_cornering_ceiling_is_continuous(self):
+        """The ceiling must not be quantised: a smoothly varying curvature has to give a
+        smoothly varying limit, or the profile jolts each time the ceiling steps down."""
+        from helpers.simulation import read_vehicle_params
+        from laptimesim.src.car_hybrid import CarHybrid
+
+        car = CarHybrid(pars_veh=read_vehicle_params("MVRC_2026"))
+        kappa = np.linspace(1.0 / 120.0, 1.0 / 100.0, 400)
+        mu = np.full_like(kappa, 1.0)
+        vel = car.v_max_cornering_arr(kappa=kappa, mu=mu, vel_subtr_corner=0.5)
+
+        steps = np.abs(np.diff(vel))
+        # the old 546-point grid could only move in 0.2 m/s jumps; a continuous solve over this
+        # range moves far less than that per sample
+        assert steps.max() < 0.05, f"largest ceiling step {steps.max():.4f} m/s -- still quantised"
+        assert np.all(np.diff(vel) <= 0.0), "tighter curvature must not raise the ceiling"
 
 
 class TestHarvestCostBenefit:

@@ -387,10 +387,27 @@ class Driver(object):
         else:
             pow_avail = np.full(no_points, pow_e)
 
-        # persistence horizon: force effects last until the next braking event
-        # (decel well beyond aero drag, ~1 g)
+        ay_max_dep = ay_max_deploy(self.pars_driver)
+        ay_pred = (vel_cl[:no_points] ** 2 * np.abs(kappa[:no_points])
+                   if kappa is not None else np.zeros(no_points))
+
+        # persistence horizon: force effects last until the next braking event (decel well
+        # beyond aero drag, ~1 g) or until the next corner -- both absorb a speed gain. QUALY
+        # has always counted corners as absorbing events; ERSO priced gains as if they survived
+        # every corner, so points feeding into a fast bend looked long-lived when the gain is in
+        # fact given straight back at the apex.
+        #
+        # This term is deliberately CURVATURE-based, not a_y-based, even though the deployment
+        # gate just below uses a_y. The event mask feeds tau, which prices every point, so it
+        # has to be identical from one EM iteration to the next: curvature is static, whereas
+        # a_y = v^2 kappa moves with the profile and makes points near the threshold flip in and
+        # out between iterations. That feedback stops the plan settling and makes the lap time
+        # depend on max_no_em_iters (see TestERSOStrategy::test_em_iterations_converge).
+        kappa_max_dep = self.pars_driver.get("kappa_max_deploy", 0.01)  # [1/m] ≈ 100 m radius
+        absorbs_gain = (np.abs(kappa[:no_points]) >= kappa_max_dep
+                        if kappa is not None else np.zeros(no_points, dtype=bool))
         is_braking = (np.diff(vel_cl) / dt) < -15.0
-        tau = self.__time_to_next_event(t_cl, is_braking)
+        tau = self.__time_to_next_event(t_cl, is_braking | absorbs_gain)
 
         # per-Joule value of force at each point: a speed change is worth ~ tau_i / v_i^2 s/J.
         # The same quantity prices deployment (gain) and active harvest drag (cost).
@@ -398,10 +415,7 @@ class Driver(object):
         value = tau / vel_u ** 2
         # no deployment where the car is already using up its grip laterally: the added force
         # cannot be held there and the solver brakes it off again (see DEFAULT_AY_MAX_DEPLOY)
-        deploy_ok = pow_avail > 0.0
-        if kappa is not None:
-            deploy_ok &= (vel_cl[:no_points] ** 2 * np.abs(kappa[:no_points])) <= ay_max_deploy(self.pars_driver)
-        deploy_score = np.where(deploy_ok, value, 0.0)
+        deploy_score = np.where((pow_avail > 0.0) & (ay_pred <= ay_max_dep), value, 0.0)
 
         # precompute actual energy consumed per step if deploying (uses real motor torque model)
         e_deploy_step = np.zeros(no_points)

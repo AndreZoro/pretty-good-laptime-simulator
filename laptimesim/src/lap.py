@@ -586,7 +586,20 @@ class Lap(object):
         # INITIALIZE VARIABLES -----------------------------------------------------------------------------------------
         # --------------------------------------------------------------------------------------------------------------
 
-        vel_lim_cl = np.append(self.trackobj.vel_lim, self.trackobj.vel_lim[0])
+        # Velocity ceiling for the forward pass: the driver's own limits (pit lane, global cap)
+        # combined with the cornering limit of every point. Folding the cornering limit in here
+        # is what lets the forward pass TRACK a falling ceiling through a tightening bend.
+        # Previously it was only evaluated reactively in CASE 2, once the lateral grip check had
+        # already failed, so the solver accelerated until it broke grip, got clamped by a
+        # maximum-braking backward sweep, accelerated again -- a sawtooth of roughly +0.5 and
+        # -24 m/s^2 every few metres instead of the smooth ~-6 m/s^2 lift the corner asks for.
+        vel_max_corn = self.driverobj.carobj.v_max_cornering_arr(
+            kappa=self.trackobj.kappa,
+            mu=self.trackobj.mu,
+            vel_subtr_corner=self.driverobj.pars_driver["vel_subtr_corner"],
+        )
+        vel_lim_pt = np.minimum(self.trackobj.vel_lim, vel_max_corn)
+        vel_lim_cl = np.append(vel_lim_pt, vel_lim_pt[0])
         self.e_rec_e_motor[:] = 0.0  # must be reset for every run
 
         # --------------------------------------------------------------------------------------------------------------
@@ -626,7 +639,7 @@ class Lap(object):
         # braking is handled separately — backward sweep always uses active_aero=False
         aa_kappa_threshold = active_aero_kappa_threshold(carobj.pars_general)
         active_aero = drs & (np.abs(kappa) <= aa_kappa_threshold)
-        vel_lim = self.trackobj.vel_lim
+        vel_lim = vel_lim_pt  # combined driver + cornering ceiling (see where it is built above)
         no_points = self.trackobj.no_points
         pars_general_m = carobj.pars_general["m"]
         pars_gearbox_e_i = carobj.pars_gearbox["e_i"]
@@ -869,6 +882,44 @@ class Lap(object):
                     # set velocity accordingly
                     vel_cl[i + 1] = vel_lim_cl[i + 1]
 
+                elif vel_lim_cl[i + 1] < vel_cl[i + 1]:
+                    """The ceiling at the next point is BELOW the current velocity, i.e. the
+                    corner is tightening and the car has to give speed back. Lifting is usually
+                    enough for that -- through a fast sweeper the ceiling falls at roughly the
+                    rate drag and rolling resistance slow the car anyway -- so track it by
+                    coasting. Without this the point simply broke the lateral grip check and got
+                    clamped by a maximum-braking backward sweep, which overshot below the
+                    ceiling and let the next step accelerate again: the mid-corner sawtooth.
+                    If coasting is NOT enough the ceiling stays unreachable here and the point
+                    falls through to CASE 2, where real braking is planned as before."""
+                    # coasting means no drive torque; any generator torque the harvest logic
+                    # already placed on m_e_motor stays, so its drag counts towards the lift
+                    f_x_coast = (
+                        carobj.pars_gearbox["eta_g"]
+                        * min(m_e_motor[i], 0.0)
+                        / (
+                            carobj.pars_gearbox["i_trans"][gear_cl[i]]
+                            * carobj.r_driven_tire(vel=vel_cl[i])
+                        )
+                    )
+                    a_x_coast = (
+                        f_x_coast
+                        - carobj.air_res(vel=vel_cl[i], drs=active_aero[i])
+                        - carobj.roll_res(f_z_tot=tire_loads[i].sum())
+                    ) / (pars_general_m * pars_gearbox_e_i[gear_cl[i]])
+
+                    a_x_req = (
+                        vel_lim_cl[i + 1] * vel_lim_cl[i + 1] - vel_cl[i] * vel_cl[i]
+                    ) / (2 * stepsize)
+
+                    if a_x_req >= a_x_coast:
+                        # closed throttle: drag, rolling resistance and any generator load do
+                        # the decelerating. m_e_motor is left alone so harvest still accounts.
+                        m_eng[i] = 0.0
+                        m_requ[i] = min(m_e_motor[i], 0.0)
+                        a_x = a_x_req
+                        vel_cl[i + 1] = vel_lim_cl[i + 1]
+
                 # check shifting -> calculate gear and rev in the next point
                 gear_cl[i + 1], n_cl[i + 1] = carobj.find_gear(vel=vel_cl[i + 1])
 
@@ -962,15 +1013,9 @@ class Lap(object):
                         + " previous lap)"
                     )
 
-                # get maximum current velocity depending on speed limit or lateral acceleration limit due to curvature
-                vel_cl[i] = min(
-                    carobj.v_max_cornering(
-                        kappa=kappa[i],
-                        mu=mu[i],
-                        vel_subtr_corner=pars_driver["vel_subtr_corner"],
-                    ),
-                    vel_lim[i],
-                )
+                # get maximum current velocity depending on speed limit or lateral acceleration
+                # limit due to curvature -- both already combined into the ceiling array
+                vel_cl[i] = vel_lim[i]
 
                 # ------------------------------------------------------------------------------------------------------
                 # BACKWARD ITERATIONS -> MAXIMUM CURRENT VELOCITY SHOULD BE KEPT AT CURRENT POINT i --------------------
