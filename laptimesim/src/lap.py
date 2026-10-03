@@ -3,7 +3,8 @@ import math
 import matplotlib.pyplot as plt
 import numpy as np
 
-from laptimesim.src.car import active_aero_kappa_threshold
+from laptimesim.src._jit_kernels import _air_res, _brake_back_vel
+from laptimesim.src.car import active_aero_kappa_threshold, _LBS_MAP
 from laptimesim.src.driver import Driver, ay_max_deploy, ay_max_harvest
 from laptimesim.src.track import Track
 
@@ -439,13 +440,13 @@ class Lap(object):
                 if plan_cycled:
                     return False
                 if is_erso_or_qualy:
-                    return math.fabs(float(np.sum(self.e_rec_e_motor)) - e_rec_prev) > self.pars_solver["es_diff_max"]
+                    return math.fabs(float(self.e_rec_e_motor.sum()) - e_rec_prev) > self.pars_solver["es_diff_max"]
                 return math.fabs(self.es_cl[-1] - es_prev) > self.pars_solver["es_diff_max"]
 
             while _not_converged() and i < self.pars_solver["max_no_em_iters"]:
                 i += 1
                 es_prev = self.es_cl[-1]
-                e_rec_prev = float(np.sum(self.e_rec_e_motor))
+                e_rec_prev = float(self.e_rec_e_motor.sum())
 
                 if self.debug_opts["use_print"]:
                     print("Starting recalculation considering hybrid system (%i)" % i)
@@ -467,7 +468,7 @@ class Lap(object):
                     es_final=self.es_cl[-1],
                     e_rec_max=self.e_rec_e_motor_max,
                     p_rec_max=self.p_rec_max,
-                    e_rec_actual=float(np.sum(self.e_rec_e_motor)),
+                    e_rec_actual=float(self.e_rec_e_motor.sum()),
                     # braking regen only (recovery outside the previous active-harvest mask) —
                     # exogenous income for the self-consistent ERSO harvest/deploy plan
                     e_rec_braking=float(np.sum(self.e_rec_e_motor[~self.driverobj.em_harvest_use])),
@@ -602,6 +603,31 @@ class Lap(object):
         vel_lim_cl = np.append(vel_lim_pt, vel_lim_pt[0])
         self.e_rec_e_motor[:] = 0.0  # must be reset for every run
 
+        # Running total of e_rec_e_motor, maintained incrementally so the recovery-budget test
+        # below does not have to re-sum the whole array. The test is asked ~121k times per lap
+        # and the array is ~4600 long, which made it the second largest cost in the solver.
+        #
+        # The running total is NOT used as the answer: summing incrementally accumulates
+        # rounding error in a different order than ndarray.sum(), so using it directly could
+        # flip the comparison. It is used only to decide the question cheaply when the answer is
+        # not in doubt, and the exact sum is still taken inside a guard band around the cap:
+        #   running < cap - EPS  -> under budget for certain
+        #   running > cap + EPS  -> over budget for certain
+        #   otherwise            -> fall back to the exact e_rec_e_motor.sum()
+        # so the branch taken is always the one the exact sum would have given.
+        #
+        # EPS = 1 kJ. Bounding the drift analytically as m * u * max|total| -- m the updates in
+        # one solver pass (~2.7e4), u the double epsilon (1.1e-16), max|total| the cap (8 MJ) --
+        # gives ~2.4e-5 J; measured over 271607 tests on Barcelona/MVRC_2026 the worst observed
+        # drift was 4.2e-8 J, so 1 kJ leaves a margin of ~1e10. Over those same tests the fast
+        # decision never disagreed with the exact one, and 0.04-1.9 % of tests fell inside the
+        # band and took the exact sum. If the cap ever becomes small enough to be comparable to
+        # EPS, shrink EPS rather than trusting the band.
+        e_rec_running = 0.0
+        e_rec_max_c = self.e_rec_e_motor_max
+        e_rec_lo = e_rec_max_c - 1000.0
+        e_rec_hi = e_rec_max_c + 1000.0
+
         # --------------------------------------------------------------------------------------------------------------
         # SET START CONDITIONS -----------------------------------------------------------------------------------------
         # --------------------------------------------------------------------------------------------------------------
@@ -659,6 +685,15 @@ class Lap(object):
         # these are the authoritative checks, against the a_y the car actually reaches.
         ay_max_harv = ay_max_harvest(pars_driver)
         ay_max_dep = ay_max_deploy(pars_driver)
+        # resistance coefficients and the packed tire/aero arrays, hoisted so the resistance
+        # terms and the backward-braking kernel can be called without going through the Car
+        # wrappers -- they sit on the per-point path and are called 160k+ times per lap
+        jit_params = carobj._jit_params
+        jit_fz_data = carobj._jit_fz_data
+        rho_air_c = jit_params[1]    # _RHO
+        c_w_a_c = jit_params[2]      # _CWA
+        f_roll_c = jit_params[3]     # _FROLL
+        drs_factor_c = jit_params[4] # _DRS
 
         i = 0
         a_x = a_x_start
@@ -779,7 +814,8 @@ class Lap(object):
                     and m_e_motor[i] == 0.0
                     and powertrain_type == "hybrid"
                     and pars_driver["use_recuperation"]
-                    and np.sum(e_rec_e_motor) < self.e_rec_e_motor_max
+                    and (e_rec_running < e_rec_lo
+                         or (e_rec_running <= e_rec_hi and e_rec_e_motor.sum() < e_rec_max_c))
                     and es_cl[i] < es_max
                 ):
                     harvest_torque = min(carobj.torque_e_motor(n=n_cl[i]),
@@ -801,7 +837,8 @@ class Lap(object):
                     and m_e_motor[i] <= 0.0
                     and m_eng[i] > 0.0
                     and pars_driver["use_recuperation"]
-                    and np.sum(e_rec_e_motor) < self.e_rec_e_motor_max
+                    and (e_rec_running < e_rec_lo
+                         or (e_rec_running <= e_rec_hi and e_rec_e_motor.sum() < e_rec_max_c))
                     and es_cl[i] < es_max
                 ):
                     spare = carobj.torque(n=n_cl[i]) - m_eng[i]
@@ -829,8 +866,8 @@ class Lap(object):
                 # calculate reached longitudinal acceleration (e_i accounts for rotational inertia)
                 a_x_start = (
                     f_x_powert
-                    - carobj.air_res(vel=vel_cl[i], drs=active_aero[i])
-                    - carobj.roll_res(f_z_tot=tire_loads[i].sum())
+                    - _air_res(vel_cl[i], active_aero[i], rho_air_c, c_w_a_c, drs_factor_c)
+                    - (tire_loads[i, 0] + tire_loads[i, 1] + tire_loads[i, 2] + tire_loads[i, 3]) * f_roll_c
                 ) / (pars_general_m * pars_gearbox_e_i[gear_cl[i]])
 
                 # --- Heun's method: lightweight predictor-corrector ---
@@ -842,8 +879,8 @@ class Lap(object):
                 if i + 1 < no_points:
                     a_x_end = (
                         f_x_powert
-                        - carobj.air_res(vel=v_pred, drs=active_aero[i])
-                        - carobj.roll_res(f_z_tot=tire_loads[i].sum())
+                        - _air_res(v_pred, active_aero[i], rho_air_c, c_w_a_c, drs_factor_c)
+                        - (tire_loads[i, 0] + tire_loads[i, 1] + tire_loads[i, 2] + tire_loads[i, 3]) * f_roll_c
                     ) / (pars_general_m * pars_gearbox_e_i[gear_cl[i]])
 
                     a_x = 0.5 * (a_x_start + a_x_end)
@@ -864,8 +901,8 @@ class Lap(object):
                     ) / (2 * stepsize)
 
                     f_x_target = (
-                        carobj.air_res(vel=vel_cl[i], drs=False)
-                        + carobj.roll_res(f_z_tot=tire_loads[i].sum())
+                        _air_res(vel_cl[i], False, rho_air_c, c_w_a_c, drs_factor_c)
+                        + (tire_loads[i, 0] + tire_loads[i, 1] + tire_loads[i, 2] + tire_loads[i, 3]) * f_roll_c
                         + pars_general_m * pars_gearbox_e_i[gear_cl[i]] * a_x
                     )
 
@@ -904,8 +941,8 @@ class Lap(object):
                     )
                     a_x_coast = (
                         f_x_coast
-                        - carobj.air_res(vel=vel_cl[i], drs=active_aero[i])
-                        - carobj.roll_res(f_z_tot=tire_loads[i].sum())
+                        - _air_res(vel_cl[i], active_aero[i], rho_air_c, c_w_a_c, drs_factor_c)
+                        - (tire_loads[i, 0] + tire_loads[i, 1] + tire_loads[i, 2] + tire_loads[i, 3]) * f_roll_c
                     ) / (pars_general_m * pars_gearbox_e_i[gear_cl[i]])
 
                     a_x_req = (
@@ -932,8 +969,8 @@ class Lap(object):
                     # net force during shift: 25% powertrain minus drag and rolling resistance
                     f_net_shift = (
                         0.25 * f_x_powert
-                        - carobj.air_res(vel=vel_cl[i + 1], drs=active_aero[i])
-                        - carobj.roll_res(f_z_tot=tire_loads[i].sum())
+                        - _air_res(vel_cl[i + 1], active_aero[i], rho_air_c, c_w_a_c, drs_factor_c)
+                        - (tire_loads[i, 0] + tire_loads[i, 1] + tire_loads[i, 2] + tire_loads[i, 3]) * f_roll_c
                     )
                     a_shift = f_net_shift / (
                         pars_general_m * pars_gearbox_e_i[gear_before]
@@ -987,6 +1024,7 @@ class Lap(object):
                         * n_cl[i]
                         * (t_cl[i + 1] - t_cl[i])
                     )
+                    e_rec_running += e_harvest - e_rec_e_motor[i]
                     e_rec_e_motor[i] = e_harvest
 
                 # calculate changes in the hybrid energy storage [J]
@@ -1023,97 +1061,30 @@ class Lap(object):
 
                 j = 0
                 a_x = 0.0  # reset longitudinal acceleration (almost zero during maximum cornering)
-                limit_braking_weak_side = pars_solver["limit_braking_weak_side"]
+                lbs_flag = _LBS_MAP[pars_solver["limit_braking_weak_side"]]
+
+                tire_loads_tmp = np.zeros(4)  # [N] tire loads [FL, FR, RL, RR]
+                max_inner_iters = pars_solver.get("max_inner_iters", 5000)
 
                 while True:
-                    """Subsequent while loop is used to obtain the best possible approximaten of the velocity at the
-                    previous point vel_tmp. The termination criterion is checked using vel_tmp_old and tol. To
-                    counteract infinite loops convergence is forced with an increasing loop counter."""
+                    """Walk backwards from the current point, replacing each previous velocity by
+                    the one maximum braking can come down from, until a point is reached that was
+                    already slow enough. The velocity at each point is a fixed point of the
+                    braking equation (the deceleration depends on the velocity through downforce
+                    and drag) and is solved inside the _brake_back_vel() kernel."""
 
-                    # loop until a good approximation for the velocity in the previous point is found
-                    vel_tmp = vel_cl[
-                        i - j
-                    ]  # [m/s] applied velocity (current point used as a starting value)
-                    vel_tmp_old = 0.0  # [m/s] used to save the old value to compare for the termination criterion
-                    vel_sum = 0.0  # running sum for velocity averaging
-                    vel_count = 0  # running count for velocity averaging
-                    tire_loads_tmp = np.zeros(4)  # [N] tire loads [FL, FR, RL, RR]
-                    counter = 0  # [-] loop counter
+                    vel_tmp, a_x, counter = _brake_back_vel(
+                        vel_cl[i - j], a_x, kappa[i - j - 1], mu[i - j - 1],
+                        stepsize, tol, max_inner_iters,
+                        jit_params, jit_fz_data, lbs_flag, tire_loads_tmp,
+                    )
 
-                    max_inner_iters = pars_solver.get("max_inner_iters", 5000)
-
-                    while abs(vel_tmp - vel_tmp_old) > tol:
-                        # increase counter and store previous value to be able to check for the termination criterion
-                        counter += 1
-                        vel_tmp_old = vel_tmp
-
-                        if counter > max_inner_iters:
-                            raise RuntimeError(
-                                f"Solver did not converge at track point i={i} (dist={i * stepsize:.1f}m)."
-                                f" Inner braking loop exceeded {max_inner_iters} iterations."
-                                f" Check active aero gating or car/track parameters."
-                            )
-
-                        # calculate lat. acceleration and forces with temporary stored velocity and previous curvature
-                        a_y = vel_tmp * vel_tmp * kappa[i - j - 1]
-                        f_y_f, f_y_r = carobj.calc_lat_forces(a_y=a_y)
-
-                        # calculate tire force potentials
-                        (
-                            f_x_pot_fl,
-                            f_y_pot_fl,
-                            tire_loads_tmp[0],
-                            f_x_pot_fr,
-                            f_y_pot_fr,
-                            tire_loads_tmp[1],
-                            f_x_pot_rl,
-                            f_y_pot_rl,
-                            tire_loads_tmp[2],
-                            f_x_pot_rr,
-                            f_y_pot_rr,
-                            tire_loads_tmp[3],
-                        ) = carobj.tire_force_pots(
-                            vel=vel_tmp,
-                            a_x=a_x,
-                            a_y=a_y,
-                            mu=mu[i - j - 1],
-                            active_aero=False,
+                    if counter > max_inner_iters:
+                        raise RuntimeError(
+                            f"Solver did not converge at track point i={i} (dist={i * stepsize:.1f}m)."
+                            f" Inner braking loop exceeded {max_inner_iters} iterations."
+                            f" Check active aero gating or car/track parameters."
                         )
-
-                        # calculate remaining tire potential for deceleration using all wheels
-                        # assumption: potential always usable by proper brake force distribution
-                        f_x_poss = carobj.calc_f_x_pot(
-                            f_x_pot_fl=f_x_pot_fl,
-                            f_x_pot_fr=f_x_pot_fr,
-                            f_x_pot_rl=f_x_pot_rl,
-                            f_x_pot_rr=f_x_pot_rr,
-                            f_y_pot_f=f_y_pot_fl + f_y_pot_fr,
-                            f_y_pot_r=f_y_pot_rl + f_y_pot_rr,
-                            f_y_f=f_y_f,
-                            f_y_r=f_y_r,
-                            force_use_all_wheels=True,
-                            limit_braking_weak_side=limit_braking_weak_side,
-                        )
-
-                        # calculate deceleration
-                        a_x = (
-                            -(
-                                f_x_poss
-                                + carobj.air_res(vel=vel_tmp, drs=False)
-                                + carobj.roll_res(f_z_tot=tire_loads_tmp.sum())
-                            )
-                            / pars_general_m
-                        )
-
-                        # calculate previous velocity (-a_x because we go backwards and therefore need a positive
-                        # acceleration within the equation) and add to running sum
-                        vel_sum += math.sqrt(
-                            vel_cl[i - j] * vel_cl[i - j] + 2 * -a_x * stepsize
-                        )
-                        vel_count += 1
-
-                        # calculate applied velocity as average of all to get a robust convergence characteristic
-                        vel_tmp = vel_sum / vel_count
 
                     # check if the calculated velocity is greater than the original one -> break the loop
                     if vel_tmp >= vel_cl[i - j - 1]:
@@ -1155,9 +1126,7 @@ class Lap(object):
                     else:
                         drs_tmp = False
 
-                    f_x_resi = carobj.air_res(
-                        vel=vel_cl[k], drs=drs_tmp
-                    ) + carobj.roll_res(f_z_tot=tire_loads[k].sum())
+                    f_x_resi = _air_res(vel_cl[k], drs_tmp, rho_air_c, c_w_a_c, drs_factor_c) + (tire_loads[k, 0] + tire_loads[k, 1] + tire_loads[k, 2] + tire_loads[k, 3]) * f_roll_c
 
                     # calculate the longitudinal acceleration and force required for the given velocities
                     a_x_requ = (
@@ -1173,6 +1142,7 @@ class Lap(object):
                         """Engine demanded (this is the case if resistances must be overcome or if the car is
                         accelerating). Therefore, we have to recalculate the torque distribution and the energy storage
                         state."""
+                        e_rec_running -= e_rec_e_motor[k]
                         e_rec_e_motor[k] = 0.0
 
                         # calculate torque distribution within the hybrid system (trying to reach possible force f_x)
@@ -1196,7 +1166,8 @@ class Lap(object):
                             and m_e_motor[k] == 0.0
                             and powertrain_type == "hybrid"
                             and pars_driver["use_recuperation"]
-                            and np.sum(e_rec_e_motor) < self.e_rec_e_motor_max
+                            and (e_rec_running < e_rec_lo
+                         or (e_rec_running <= e_rec_hi and e_rec_e_motor.sum() < e_rec_max_c))
                             and es_cl[k] < es_max
                         ):
                             harvest_torque = min(carobj.torque_e_motor(n=n_cl[k]),
@@ -1212,7 +1183,8 @@ class Lap(object):
                             and m_e_motor[k] <= 0.0
                             and m_eng[k] > 0.0
                             and pars_driver["use_recuperation"]
-                            and np.sum(e_rec_e_motor) < self.e_rec_e_motor_max
+                            and (e_rec_running < e_rec_lo
+                         or (e_rec_running <= e_rec_hi and e_rec_e_motor.sum() < e_rec_max_c))
                             and es_cl[k] < es_max
                         ):
                             spare = carobj.torque(n=n_cl[k]) - m_eng[k]
@@ -1272,6 +1244,7 @@ class Lap(object):
                                 * n_cl[k]
                                 * (t_cl[k + 1] - t_cl[k])
                             )
+                            e_rec_running += e_harvest - e_rec_e_motor[k]
                             e_rec_e_motor[k] = e_harvest
 
                         # calculate changes in the hybrid energy storage [J]
@@ -1293,17 +1266,22 @@ class Lap(object):
                         # energy recuperation by e motor in [J] under the assumption of e motor being able to recuperate
                         # all kinetic energy remaining after subtraction of the resistances
                         if (
-                            np.sum(e_rec_e_motor) < self.e_rec_e_motor_max
+                            (e_rec_running < e_rec_lo
+                             or (e_rec_running <= e_rec_hi
+                                 and e_rec_e_motor.sum() < e_rec_max_c))
                             and pars_driver["use_recuperation"]
                         ):
+                            e_rec_old = e_rec_e_motor[k]
                             e_rec_e_motor[k] = min(
                                 carobj.pars_engine["eta_e_motor_re"]
                                 * abs(f_x_powert)
                                 * stepsize,
                                 self.p_rec_max * stepsize / vel_cl[k],
                             )
+                            e_rec_running += e_rec_e_motor[k] - e_rec_old
 
                         else:
+                            e_rec_running -= e_rec_e_motor[k]
                             e_rec_e_motor[k] = 0.0
 
                         # update energy storage (no energy harvested in el. turbocharger while engine is not demanded)

@@ -12,7 +12,18 @@ from laptimesim.src._jit_kernels import (
     _v_max_cornering,
     _v_max_cornering_arr,
     _calc_max_ax,
+    _find_gear,
     PARAMS_SIZE,
+    _M,
+    _RHO,
+    _CWA,
+    _FROLL,
+    _DRS,
+    _LF,
+    _LR,
+    _TOPO,
+    _EXP,
+    _DIFF_LOCK,
 )
 
 
@@ -119,6 +130,7 @@ class Car(object):
         "_jit_params",
         "_jit_fz_data",
         "_jit_fz_data_aa",
+        "_circ_ref_driven",
     )
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -203,6 +215,20 @@ class Car(object):
         self.f_z_calc_stat["trans_long_sign"] = np.array([-1.0, -1.0, 1.0, 1.0])
         # FL=-a_y, FR=+a_y, RL=-a_y, RR=+a_y
         self.f_z_calc_stat["trans_lat_sign"] = np.array([-1.0, 1.0, -1.0, 1.0])
+
+        # reference circumreference of the driven tire(s), topology dependent but constant for
+        # the car -- cached because find_gear needs it on every call (see _find_gear)
+        if pars_engine["topology"] == "FWD":
+            self._circ_ref_driven = pars_tires["f"]["circ_ref"]
+        elif pars_engine["topology"] == "RWD":
+            self._circ_ref_driven = pars_tires["r"]["circ_ref"]
+        elif pars_engine["topology"] == "AWD":
+            # use average circumreference in this case
+            self._circ_ref_driven = 0.5 * (
+                pars_tires["f"]["circ_ref"] + pars_tires["r"]["circ_ref"]
+            )
+        else:
+            raise RuntimeError("Powertrain topology unknown!")
 
         # build packed parameter arrays for JIT kernels
         self._jit_params = _build_jit_params(pars_general, pars_engine, pars_tires, pars_gearbox)
@@ -335,22 +361,7 @@ class Car(object):
     def __circumref_driven_tire(self, vel: float) -> float:
         """Velocity input in m/s. Reference speed for the circumreference calculation is 60 km/h. Output is in m."""
 
-        if self.pars_engine["topology"] == "FWD":
-            tire_circ_ref = self.pars_tires["f"]["circ_ref"]
-
-        elif self.pars_engine["topology"] == "RWD":
-            tire_circ_ref = self.pars_tires["r"]["circ_ref"]
-
-        elif self.pars_engine["topology"] == "AWD":
-            # use average circumreference in this case
-            tire_circ_ref = 0.5 * (
-                self.pars_tires["f"]["circ_ref"] + self.pars_tires["r"]["circ_ref"]
-            )
-
-        else:
-            raise RuntimeError("Powertrain topology unknown!")
-
-        return tire_circ_ref * (1 + (vel * 3.6 - 60.0) * (0.045 / 200.0))
+        return self._circ_ref_driven * (1 + (vel * 3.6 - 60.0) * (0.045 / 200.0))
 
     def r_driven_tire(self, vel: float) -> float:
         """Velocity input in m/s. Output is in m."""
@@ -359,19 +370,20 @@ class Car(object):
 
     def air_res(self, vel: float, drs: bool) -> float:
         """Velocity input in m/s. Output is in N."""
-        drag_reduction = self.pars_general.get(
-            "drs_factor", self.pars_general.get("active_aero_drag_reduction", 0.0))
-        return _air_res(vel, drs, self.pars_general["rho_air"],
-                        self.pars_general["c_w_a"], drag_reduction)
+        # read from the packed array rather than the dicts: identical values, but this is called
+        # ~160k times per lap and the dict .get chain for the drag reduction cost more than the
+        # kernel it feeds
+        p = self._jit_params
+        return _air_res(vel, drs, p[_RHO], p[_CWA], p[_DRS])
 
     def roll_res(self, f_z_tot: float) -> float:
         """Output is in N."""
-        return _roll_res(f_z_tot, self.pars_general["f_roll"])
+        return _roll_res(f_z_tot, self._jit_params[_FROLL])
 
     def calc_lat_forces(self, a_y: float) -> tuple:
         """Lateral acceleration input in m/s^2. Output forces in N."""
-        return _calc_lat_forces(a_y, self.pars_general["m"],
-                                self.pars_general["lf"], self.pars_general["lr"])
+        p = self._jit_params
+        return _calc_lat_forces(a_y, p[_M], p[_LF], p[_LR])
 
     def v_max_cornering(
         self, kappa: float, mu: float, vel_subtr_corner: float = 0.5
@@ -426,13 +438,14 @@ class Car(object):
                 " but force_use_all_wheels is not set True!"
             )
 
-        lbs_flag = _LBS_MAP[limit_braking_weak_side]
-        diff_lock_ratio = self.pars_gearbox.get("diff_lock_ratio", 1.0)
+        # topology, tire exponent and diff lock come from the packed array: same values as the
+        # dicts, but this is on the per-point path and the .get() chain is not free
+        p = self._jit_params
         return _calc_f_x_pot(
             f_x_pot_fl, f_x_pot_fr, f_x_pot_rl, f_x_pot_rr,
             f_y_pot_f, f_y_pot_r, f_y_f, f_y_r,
-            int(self._jit_params[7]), self.pars_tires["tire_model_exp"],
-            force_use_all_wheels, lbs_flag, diff_lock_ratio,
+            int(p[_TOPO]), p[_EXP],
+            force_use_all_wheels, _LBS_MAP[limit_braking_weak_side], p[_DIFF_LOCK],
         )
 
     def calc_max_ax(
@@ -446,24 +459,8 @@ class Car(object):
         """Velocity input in m/s. Output is the gear used for that velocity (zero based) as well as the corresponding
         engine rev in 1/s."""
 
-        # calculate theoretical engine revs for all the gears
-        n_gears = vel / (
-            self.__circumref_driven_tire(vel=vel) * self.pars_gearbox["i_trans"]
-        )  # [1/s]
-
-        # find largest gear below shift revs
-        shift_bool = n_gears < self.pars_gearbox["n_shift"]
-
-        if np.all(~shift_bool):
-            # if max rev in final gear is reached do not shift up
-            gear_ind = (
-                self.pars_gearbox["n_shift"].size - 1
-            )  # -1 due to zero based indexing
-        else:
-            # find first True value (zero based indexing of gears)
-            gear_ind = int(np.argmax(shift_bool))
-
-        return gear_ind, n_gears[gear_ind]
+        return _find_gear(vel, self._circ_ref_driven,
+                          self.pars_gearbox["i_trans"], self.pars_gearbox["n_shift"])
 
     def calc_m_requ(self, f_x: float, vel: float) -> float:
         """Function to calculate required powertrain torque to reach a specific longitudinal acceleration force f_x at

@@ -314,6 +314,100 @@ def _v_max_cornering_arr(kappa, mu, vel_subtr_corner, params, fz_data, out):
 
 
 @njit(cache=True)
+def _find_gear(vel, circ_ref, i_trans, n_shift):
+    """Gear (zero based) and engine rev [1/s] at this velocity. vel in m/s, circ_ref in m.
+
+    Picks the lowest gear whose theoretical rev is still below its shift rev, and stays in the
+    final gear once even that one is over its shift rev.
+
+    Replaces an array formulation that built three temporaries per call (an 8-element divide,
+    a boolean mask, then np.all/np.argmax over it) for what is scalar work. find_gear is called
+    once per forward step and once per recalculated point, 157k times in a single MVRC lap, so
+    the temporaries dominated it. Bit-identical to the array form: the arithmetic per gear is
+    the same and the selection rule picks the same index.
+    """
+    circ = circ_ref * (1.0 + (vel * 3.6 - 60.0) * (0.045 / 200.0))
+
+    gear_ind = n_shift.shape[0] - 1  # -1 due to zero based indexing
+    for k in range(n_shift.shape[0]):
+        if vel / (circ * i_trans[k]) < n_shift[k]:
+            gear_ind = k
+            break
+
+    return gear_ind, vel / (circ * i_trans[gear_ind])
+
+
+@njit(cache=True)
+def _brake_back_vel(vel_known, a_x, kappa_prev, mu_prev, stepsize, tol, max_iters,
+                    params, fz_data, lbs_flag, tire_loads_out):
+    """Velocity at the point before 'vel_known' under maximum braking, as a fixed point.
+
+    This is the backward-sweep inner loop of Lap.__fbplus, moved into one compiled kernel:
+    it used to run in Python and cross the Numba boundary six times per iteration, which
+    dominated the solver's run time because the iteration count per point is in the hundreds
+    (the fixed point is approached by a running average -- see the loop body).
+
+    The arithmetic is unchanged, operation for operation, so the result is bit-identical to
+    the Python version.
+
+    Returns (vel_tmp, a_x, counter); tire_loads_out[0:4] holds the loads at the converged
+    velocity. counter > max_iters signals non-convergence, which the caller reports.
+    """
+    m = params[_M]
+    exp = params[_EXP]
+    diff_lock_ratio = params[_DIFF_LOCK]
+    topology = int(params[_TOPO])
+    rho_air = params[_RHO]
+    c_w_a = params[_CWA]
+    drs_factor = params[_DRS]
+    f_roll = params[_FROLL]
+    lf = params[_LF]
+    lr = params[_LR]
+
+    vel_tmp = vel_known
+    vel_tmp_old = 0.0
+    vel_sum = 0.0
+    vel_count = 0
+    counter = 0
+
+    while abs(vel_tmp - vel_tmp_old) > tol:
+        counter += 1
+        vel_tmp_old = vel_tmp
+
+        if counter > max_iters:
+            return vel_tmp, a_x, counter
+
+        a_y = vel_tmp * vel_tmp * kappa_prev
+        f_y_f, f_y_r = _calc_lat_forces(a_y, m, lf, lr)
+
+        (f_x_pot_fl, f_y_pot_fl, tire_loads_out[0],
+         f_x_pot_fr, f_y_pot_fr, tire_loads_out[1],
+         f_x_pot_rl, f_y_pot_rl, tire_loads_out[2],
+         f_x_pot_rr, f_y_pot_rr, tire_loads_out[3]) = _tire_force_pots(
+            vel_tmp, a_x, a_y, mu_prev, params, fz_data)
+
+        f_x_poss = _calc_f_x_pot(
+            f_x_pot_fl, f_x_pot_fr, f_x_pot_rl, f_x_pot_rr,
+            f_y_pot_fl + f_y_pot_fr, f_y_pot_rl + f_y_pot_rr, f_y_f, f_y_r,
+            topology, exp, True, lbs_flag, diff_lock_ratio)
+
+        f_z_tot = (tire_loads_out[0] + tire_loads_out[1]
+                   + tire_loads_out[2] + tire_loads_out[3])
+
+        a_x = -(f_x_poss
+                + _air_res(vel_tmp, False, rho_air, c_w_a, drs_factor)
+                + _roll_res(f_z_tot, f_roll)) / m
+
+        vel_sum += math.sqrt(vel_known * vel_known + 2 * -a_x * stepsize)
+        vel_count += 1
+
+        # applied velocity as the average of all iterates (robust convergence characteristic)
+        vel_tmp = vel_sum / vel_count
+
+    return vel_tmp, a_x, counter
+
+
+@njit(cache=True)
 def _calc_max_ax(vel, a_y, mu, f_y_f, f_y_r, params, fz_data):
     """
     Calculate maximum longitudinal acceleration using binary search.

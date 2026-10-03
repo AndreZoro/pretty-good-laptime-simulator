@@ -22,7 +22,12 @@ class CarHybrid(Car):
     # SLOTS ------------------------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
 
-    __slots__ = "__z_pow_engine"
+    # the _pow_* / _fuel_* entries cache what __power_engine needs on its scalar fast path,
+    # so a per-point power lookup costs no dict lookups and allocates nothing
+    __slots__ = ("__z_pow_engine", "_pow_c3", "_pow_c2", "_pow_c1", "_pow_c0",
+                 "_n_clip_lo", "_n_clip_hi", "_fuel_lim_pars",
+                 "_pow_e_motor_c", "_torque_e_motor_max_c", "_ers_speed_limit_c",
+                 "_vel_min_e_motor_c", "_eta_e_motor_c")
 
     # ------------------------------------------------------------------------------------------------------------------
     # CONSTRUCTOR ------------------------------------------------------------------------------------------------------
@@ -80,6 +85,37 @@ class CarHybrid(Car):
         b = np.array([[pow_begend], [0], [pow_max], [pow_begend]])
         self.z_pow_engine = np.linalg.solve(a, b)
 
+        # scalar copies of everything __power_engine needs, so the per-point path below does no
+        # dict lookups and builds no arrays. pars_engine and z_pow_engine are not written after
+        # construction anywhere, same as the packed JIT parameter arrays in Car.
+        z = self.z_pow_engine  # shape (4, 1) -- it solves against a column vector
+        self._pow_c3 = float(z[0, 0])
+        self._pow_c2 = float(z[1, 0])
+        self._pow_c1 = float(z[2, 0])
+        self._pow_c0 = float(z[3, 0])
+        self._n_clip_lo = 0.75 * self.pars_engine["n_begin"]
+        self._n_clip_hi = 1.2 * self.pars_engine["n_end"]
+
+        ef_max_ = self.pars_engine.get("fuel_energy_flow_max")
+        if ef_max_ is None:
+            self._fuel_lim_pars = None
+        else:
+            self._fuel_lim_pars = (
+                ef_max_,
+                self.pars_engine.get("fuel_ef_slope", 0.27),
+                self.pars_engine.get("fuel_ef_offset", 165.0),
+                self.pars_engine.get("fuel_ef_n_ref", 10500.0),
+                self.pars_engine.get("eta_thermal", 0.48),
+            )
+
+        # engine parameters read on the per-point torque path (torque_e_motor,
+        # calc_torque_distr, power_demand_e_motor_drive), cached for the same reason
+        self._pow_e_motor_c = self.pars_engine["pow_e_motor"]
+        self._torque_e_motor_max_c = self.pars_engine["torque_e_motor_max"]
+        self._ers_speed_limit_c = self.pars_engine.get("ers_speed_limit", False)
+        self._vel_min_e_motor_c = self.pars_engine["vel_min_e_motor"]
+        self._eta_e_motor_c = self.pars_engine["eta_e_motor"]
+
     # ------------------------------------------------------------------------------------------------------------------
     # GETTERS / SETTERS ------------------------------------------------------------------------------------------------
     # ------------------------------------------------------------------------------------------------------------------
@@ -97,6 +133,37 @@ class CarHybrid(Car):
         Power curve is approximated by a peak power pow_max at n_max and equal drops on both sides at n_begin and n_end.
         Rev input is in 1/s, output is in W.
         """
+
+        # Scalar fast path. The solver asks for the power at a single rev ~58k times per lap,
+        # and the array formulation below allocates six temporaries per call to do it. The
+        # arithmetic here is chosen to match numpy bit for bit: npy_pow special-cases an
+        # exponent of 2 into a multiply but not 3, so the cubic term must go through math.pow
+        # and the square must NOT (x*x*x differs from pow(x, 3) for ~26 % of inputs, and
+        # math.pow(x, 2) differs from x*x for some).
+        if type(n) is float or type(n) is np.float64:
+            n_use = n
+            if n_use < self._n_clip_lo:
+                n_use = self._n_clip_lo
+            if n_use > self._n_clip_hi:
+                n_use = self._n_clip_hi
+
+            p_eng = (self._pow_c3 * math.pow(n_use, 3) + self._pow_c2 * (n_use * n_use)
+                     + self._pow_c1 * n_use + self._pow_c0)
+            if p_eng < 0.0:
+                p_eng = 0.0
+
+            if self._fuel_lim_pars is not None:
+                ef_max, ef_slope, ef_offset, n_ref, eta_thermal = self._fuel_lim_pars
+                n_rpm = n_use * 60.0
+                if n_rpm < n_ref:
+                    ef = min(ef_slope * n_rpm + ef_offset, ef_max)
+                else:
+                    ef = ef_max
+                p_limit = eta_thermal * ef * 1e6 / 3600.0
+                if p_limit < p_eng:
+                    p_eng = p_limit
+
+            return p_eng
 
         # get relevant data
         n_begin = self.pars_engine["n_begin"]
@@ -171,7 +238,7 @@ class CarHybrid(Car):
     def pow_e_motor_max(self, vel: float, override: bool = False) -> float:
         """Velocity in m/s. Returns max ERS-K deploy power in W per C5.2.8."""
         v_kph = vel * 3.6
-        p_max = self.pars_engine["pow_e_motor"]  # absolute cap (350 kW)
+        p_max = self._pow_e_motor_c  # absolute cap (350 kW)
 
         if not override:
             # Normal mode (C5.2.8.i)
@@ -193,15 +260,15 @@ class CarHybrid(Car):
     def torque_e_motor(self, n: float, vel: float = None) -> float:
         """Rev input in 1/s. Output is the maximum torque in Nm."""
 
-        if vel is not None and self.pars_engine.get("ers_speed_limit", False):
+        if vel is not None and self._ers_speed_limit_c:
             pow_avail = self.pow_e_motor_max(vel)
         else:
-            pow_avail = self.pars_engine["pow_e_motor"]
+            pow_avail = self._pow_e_motor_c
 
         torque_tmp = pow_avail / (2 * math.pi * n)
 
-        if torque_tmp > self.pars_engine["torque_e_motor_max"]:
-            torque_tmp = self.pars_engine["torque_e_motor_max"]
+        if torque_tmp > self._torque_e_motor_max_c:
+            torque_tmp = self._torque_e_motor_max_c
 
         return torque_tmp
 
@@ -243,7 +310,7 @@ class CarHybrid(Car):
     def power_demand_e_motor_drive(self, n: np.ndarray, m_e_motor: np.ndarray) -> np.ndarray:
         """Rev input in 1/s, torque input in Nm. Output is in W. Calculates used power including the efficiency."""
 
-        return (2 * math.pi * n * m_e_motor) / self.pars_engine["eta_e_motor"]
+        return (2 * math.pi * n * m_e_motor) / self._eta_e_motor_c
 
     def calc_torque_distr(self, n: float, m_requ: float, throttle_pos: float, es: float,
                           em_boost_use: bool, vel: float) -> tuple:
@@ -261,7 +328,7 @@ class CarHybrid(Car):
         elif m_requ <= eng_torque_max + e_motor_torque_max:  # ICE + e motor (partly)
             m_eng = throttle_pos * eng_torque_max
 
-            if es > 0.0 and em_boost_use and vel >= self.pars_engine["vel_min_e_motor"]:
+            if es > 0.0 and em_boost_use and vel >= self._vel_min_e_motor_c:
                 m_e_motor = throttle_pos * (m_requ - eng_torque_max)
             else:
                 m_e_motor = 0.0
@@ -269,7 +336,7 @@ class CarHybrid(Car):
         else:  # ICE + e motor (fully)
             m_eng = throttle_pos * eng_torque_max
 
-            if es > 0.0 and em_boost_use and vel >= self.pars_engine["vel_min_e_motor"]:
+            if es > 0.0 and em_boost_use and vel >= self._vel_min_e_motor_c:
                 m_e_motor = throttle_pos * e_motor_torque_max
             else:
                 m_e_motor = 0.0
